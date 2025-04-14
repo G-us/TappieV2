@@ -52,8 +52,8 @@
 // BLE server name
 #define bleServerName "TappieTest"
 
-
-
+BLECharacteristic TestChar("a9c8c7b4-fb55-4d27-99e4-2c14b5812546", BLECharacteristic::PROPERTY_NOTIFY);
+BLEDescriptor TestCharDescriptor(BLEUUID((uint16_t)0x2901));
 
 // Timer variables
 unsigned long lastTime = 0;
@@ -97,22 +97,9 @@ void setup()
   // Create the BLE Service
   BLEService *bmeService = pServer->createService(SERVICE_UUID);
 
-// Create BLE Characteristics and Create a BLE Descriptor
-// Temperature
-// #ifdef temperatureCelsius
-//   bmeService->addCharacteristic(&bmeTemperatureCelsiusCharacteristics);
-//   bmeTemperatureCelsiusDescriptor.setValue("BME temperature Celsius");
-//   bmeTemperatureCelsiusCharacteristics.addDescriptor(&bmeTemperatureCelsiusDescriptor);
-// #else
-//   bmeService->addCharacteristic(&bmeTemperatureFahrenheitCharacteristics);
-//   bmeTemperatureFahrenheitDescriptor.setValue("BME temperature Fahrenheit");
-//   bmeTemperatureFahrenheitCharacteristics.addDescriptor(&bmeTemperatureFahrenheitDescriptor);
-// #endif
-
-//   // Humidity
-//   bmeService->addCharacteristic(&bmeHumidityCharacteristics);
-//   bmeHumidityDescriptor.setValue("BME humidity");
-//   bmeHumidityCharacteristics.addDescriptor(new BLE2902());
+  bmeService->addCharacteristic(&TestChar);
+  TestCharDescriptor.setValue("Hello this is henry hes so cool");
+  TestChar.addDescriptor(&TestCharDescriptor);
 
   // Start the service
   bmeService->start();
@@ -122,12 +109,17 @@ void setup()
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pServer->getAdvertising()->start();
   Serial.println("Waiting a client connection to notify...");
+  String randomValue = String(rand() % 100); // Random value between 0 and 99
+  TestChar.setValue("hello hello");
 }
+
 
 void loop()
 {
   if (deviceConnected)
   {
     Serial.println("Device connected, sending data...");
+    String randomValue = String(rand() % 100); // Random value between 0 and 99
+    TestChar.setValue(randomValue.c_str());
   }
 }
