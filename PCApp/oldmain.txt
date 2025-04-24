@@ -1,0 +1,270 @@
+import asyncio
+import time
+from bleak import BleakClient, BleakScanner
+from bleak.exc import BleakError
+from ahk import AHK
+import threading
+
+# UUIDs from your ESP32 code
+SERVICE_UUID = "738b66f1-91b7-4f25-8ab8-31d38d56541a"
+encPosUUID = "a9c8c7b4-fb55-4d27-99e4-2c14b5812546"
+encButtonUUID = "0c2f5fbe-c20f-49ec-8c7c-ce0c9358e574"
+mediaButtonUUID = "9ff67916-665f-4489-b257-46d118b1e5eb"
+DEVICE_NAME = "TappieTest"
+RECONNECT_DELAY = 15  # seconds
+global previousEncPos
+previousEncPos = 0
+
+volumeDiff = 5  # Volume difference for each encoder step
+
+# ==========AUDIO DEVICE INDEX==========
+Aux = 13
+Gaming = 17
+Media = 9
+Chat = 11
+Master = 15
+global selectedMedia, reset_timer, last_volume_change
+selectedMedia = "Master"  # Default selection
+reset_timer = None  # Timer object
+last_volume_change = time.time()  # Track the last time volume was changed
+RESET_DELAY = 10  # Seconds to wait before resetting to Master
+
+ahk = AHK()
+
+def reset_selected_media():
+    """Reset the selected media to Master after inactivity"""
+    global selectedMedia
+    selectedMedia = "Master"
+    print("Inactivity detected - Reset to Master volume control")
+
+def schedule_reset():
+    """Schedule a reset to Master after RESET_DELAY seconds"""
+    global reset_timer
+    # Cancel existing timer if there is one
+    if reset_timer:
+        reset_timer.cancel()
+    
+    # Create new timer
+    reset_timer = threading.Timer(RESET_DELAY, reset_selected_media)
+    reset_timer.daemon = True  # Allow the app to exit even if timer is running
+    reset_timer.start()
+
+def getMediaIndex(selectedMedia):
+    """Get the index of the selected media device."""
+    if selectedMedia == "Aux":
+        print("Selected media: Aux")
+        return Aux
+    elif selectedMedia == "Gaming":
+        print("Selected media: Gaming")
+        return Gaming
+    elif selectedMedia == "Media":
+        print("Selected media: Media")
+        return Media
+    elif selectedMedia == "Chat":
+        print("Selected media: Chat")
+        return Chat
+    elif selectedMedia == "Master":
+        print("Selected media: Master")
+        return Master
+    else:
+        print("Invalid media selection")
+        return None
+
+def turnUpVolume():
+    # Turn up the volume of the selected media device.
+    global last_volume_change
+    device_index = getMediaIndex(selectedMedia)
+    previousVolume = ahk.get_volume(device_index)
+    ahk.set_volume(previousVolume + volumeDiff, device_index, blocking=False)
+    print(f"Volume increased to {previousVolume + volumeDiff} for device {device_index}")
+    
+    # Update the last volume change time and schedule a reset
+    last_volume_change = time.time()
+    schedule_reset()
+
+def turnDownVolume():
+    global last_volume_change
+    device_index = getMediaIndex(selectedMedia)
+    previousVolume = ahk.get_volume(device_index)
+    ahk.set_volume(previousVolume - volumeDiff, device_index, blocking=False)
+    print(f"Volume decreased to {previousVolume - volumeDiff} for device {device_index}")
+    
+    # Update the last volume change time and schedule a reset
+    last_volume_change = time.time()
+    schedule_reset()
+
+def MediaButtonNotificationHandler(sender, data):
+    global selectedMedia, reset_timer
+    mediaButton = data.decode()
+    print(f"Received media button data: {mediaButton}")
+    
+    # Cancel any pending reset when a button is explicitly pressed
+    if reset_timer:
+        reset_timer.cancel()
+        reset_timer = None
+    
+    if mediaButton == "Aux":
+        print("Media button pressed: Aux")
+        selectedMedia = "Aux"
+    elif mediaButton == "Gaming":
+        print("Media button pressed: Gaming")
+        selectedMedia = "Gaming"
+    elif mediaButton == "Media":
+        print("Media button pressed: Media")
+        selectedMedia = "Media"
+    elif mediaButton == "Chat":
+        print("Media button pressed: Chat")
+        selectedMedia = "Chat"
+    elif mediaButton == "Master":
+        print("Media button pressed: Master")
+        selectedMedia = "Master"
+    elif mediaButton == "0":
+        print("Media button released")
+        # Do something when media button is released
+
+def encPosNotificationHandler(sender, data):
+    """Simple notification handler which prints the data received."""
+    global previousEncPos  # Declare previousEncPos as global
+    encPos = data.decode()
+    encPos = int(encPos)  # Convert to integer
+    print(f"Received data: {encPos}")
+    if encPos == 0:
+        print("Encoder position is zero, ignoring...")
+        return
+    elif encPos - previousEncPos > 0:
+        print(f"Encoder position increased: {encPos}")
+        turnUpVolume()
+    elif encPos - previousEncPos < 0:
+        print(f"Encoder position decreased: {encPos}")
+        turnDownVolume()
+    else:
+        print(f"Encoder position unchanged: {encPos}")
+
+    previousEncPos = encPos
+
+def encButtonNotificationHandler(sender, data):
+    """Simple notification handler which prints the data received."""
+    encButton = data.decode()
+    print(f"Received button data: {encButton}")
+    if encButton == "single click":
+        print("EncButton pressed once")
+        ahk.key_press("Media_Play_Pause")
+    elif encButton == "double click":
+        print("EncButton pressed twice")
+        ahk.key_press("Media_Next")
+    elif encButton == "multi click":
+        print("EncButton pressed multiple times")
+        ahk.key_press("Media_Prev")
+    elif encButton == "long press release":
+        print("EncButton long released")
+        #ahk.run_script('Run C:\Users\henry\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Spotify.lnk')
+    elif encButton == "0":
+        print("Button released")
+        # Do something when button is released
+
+async def find_device():
+    """Find the BLE device by name."""
+    print(f"Scanning for {DEVICE_NAME}...")
+    device = await BleakScanner.find_device_by_name(DEVICE_NAME)
+    
+    if device is None:
+        print(f"Could not find {DEVICE_NAME}")
+        # Let's see what devices are available
+        print("Available devices:")
+        devices = await BleakScanner.discover()
+        for d in devices:
+            print(f"  {d.name}: {d.address}")
+        return None
+    
+    print(f"Found {device.name} ({device.address})")
+    return device
+
+async def connect_with_retry():
+    """Connect to the device with retry mechanism."""
+    while True:
+        device = await find_device()
+        if not device:
+            print(f"Retrying in {RECONNECT_DELAY} seconds...")
+            await asyncio.sleep(RECONNECT_DELAY)
+            continue
+        
+        try:
+            client = BleakClient(device)
+            await client.connect()
+            print(f"Connected: {client.is_connected}")
+            return client
+        except BleakError as e:
+            print(f"Connection error: {e}")
+            print(f"Retrying in {RECONNECT_DELAY} seconds...")
+            await asyncio.sleep(RECONNECT_DELAY)
+
+async def run_client(client):
+    """Run the client once connected."""
+    try:
+        # Get services
+        services = await client.get_services()
+        for service in services:
+            print(f"Service: {service.uuid}")
+            for char in service.characteristics:
+                print(f"  Characteristic: {char.uuid}")
+                print(f"    Properties: {char.properties}")
+                print(f"    Description: {char.description}")
+        
+        # Start notification
+        await client.start_notify(encPosUUID, encPosNotificationHandler)
+        await client.start_notify(encButtonUUID, encButtonNotificationHandler)
+        await client.start_notify(mediaButtonUUID, MediaButtonNotificationHandler)
+        
+        print("Listening for notifications, press Ctrl+C to stop...")
+        
+        # Keep checking connection and reconnect if needed
+        while True:
+            if not client.is_connected:
+                print("Disconnected! Attempting to reconnect...")
+                break
+            await asyncio.sleep(1)
+            
+    except Exception as e:
+        print(f"Error during client operation: {e}")
+    finally:
+        # Make sure to properly disconnect if still connected
+        if client.is_connected:
+            try:
+                await client.stop_notify(encPosUUID)
+                await client.stop_notify(encButtonUUID)
+                await client.stop_notify(mediaButtonUUID)
+                print("Notifications stopped")
+                await client.disconnect()
+            except Exception as e:
+                print(f"Error during disconnect: {e}")
+
+async def main():
+    """Main function with connection management and reconnection logic."""
+    try:
+        while True:
+            # Connect to the device (with retry mechanism)
+            client = await connect_with_retry()
+            
+            # Run the client until disconnection
+            await run_client(client)
+            
+            # If we get here, the connection was lost
+            print(f"Reconnecting in {RECONNECT_DELAY} seconds...")
+            await asyncio.sleep(RECONNECT_DELAY)
+            
+    except asyncio.CancelledError:
+        # Handle task cancellation (Ctrl+C)
+        print("Task was cancelled")
+    except KeyboardInterrupt:
+        print("Script terminated by user")
+
+if __name__ == "__main__":
+    previousEncPos = 0
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Script terminated by user")
+    finally:
+        # Cancel any pending timer when exiting
+        if reset_timer:
+            reset_timer.cancel()
