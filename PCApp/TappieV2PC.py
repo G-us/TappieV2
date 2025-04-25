@@ -25,11 +25,12 @@ VOLUME_STEP = 5       # Volume increment/decrement per encoder step
 
 # Audio device indices
 AUDIO_DEVICES = {
-    "Aux": 13,
+    "Master": 15,
     "Gaming": 17,
+    "Aux": 13,
     "Media": 9,
     "Chat": 11,
-    "Master": 15
+    
 }
 
 class TappieController:
@@ -64,13 +65,29 @@ class TappieController:
         #Round a number to the nearest multiple of 5#
         return round(x / 5) * 5
     
+    def updateToolTip(self, batteryLevel):
+        #Update the tooltip with the current battery level#
+        toolTipString = ""
+        for audio_device in AUDIO_DEVICES:
+            if self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type="MASTER", control_type="MUTE") == "On":
+                toolTipString += f"{audio_device} is muted\n"
+            else:
+                volume = self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type='MASTER', control_type='VOLUME')
+                volume_int = int(float(volume))
+                toolTipString += f"{audio_device}: {volume_int}%\n"
+        if batteryLevel == None:
+            toolTipString += "Battery level: idk man but soon\n"
+        else:
+            toolTipString += f"Battery level: {batteryLevel}%"
+        self.ahk.menu_tray_tooltip(toolTipString)
+        
+    
     def handleBatteryLevel(self, batteryLevel):
         # Handle battery level notifications with better error handling
         try:
             # Try to convert to integer
             batteryLevel = int(batteryLevel)
             print(f"Battery level: {batteryLevel}%")
-            self.ahk.menu_tray_tooltip(f"Battery level: {batteryLevel}%")
             
             # Handle low battery notification
             if batteryLevel < 20:
@@ -104,26 +121,30 @@ class TappieController:
             self.reset_timer.cancel()
             self.reset_timer = None
         device_index = self.get_device_index(None)
-        current_volume = self.ahk.sound_get(device_number=device_index, component_type="MASTER", control_type="VOLUME")
-        current_volume = int(float(current_volume))
-        current_volume = self.roundToFive(current_volume)
-        if increase:
-            new_volume = current_volume + VOLUME_STEP
-            operation = "increased"
+        if self.ahk.sound_get(device_number=device_index, component_type="MASTER", control_type="MUTE") == "On":
+            print("Device is muted, cannot adjust volume")
+            return
         else:
-            new_volume = current_volume - VOLUME_STEP
-            operation = "decreased"
-        
-        # Ensure volume stays within valid range (0-100)
-        new_volume = max(0, min(100, new_volume))
-        print(new_volume)
-        
-        self.ahk.sound_set(new_volume, device_number=device_index, component_type="MASTER", control_type="VOLUME")
-        print(f"Volume {operation} to {new_volume} for device {device_index}")
-        
-        # Update timestamp and schedule reset
-        self.last_volume_change = time.time()
-        self.schedule_reset()
+            current_volume = self.ahk.sound_get(device_number=device_index, component_type="MASTER", control_type="VOLUME")
+            current_volume = int(float(current_volume))
+            current_volume = self.roundToFive(current_volume)
+            if increase:
+                new_volume = current_volume + VOLUME_STEP
+                operation = "increased"
+            else:
+                new_volume = current_volume - VOLUME_STEP
+                operation = "decreased"
+            
+            # Ensure volume stays within valid range (0-100)
+            new_volume = max(0, min(100, new_volume))
+            print(new_volume)
+            
+            self.ahk.sound_set(new_volume, device_number=device_index, component_type="MASTER", control_type="VOLUME")
+            print(f"Volume {operation} to {new_volume} for device {device_index}")
+            
+            # Update timestamp and schedule reset
+            self.last_volume_change = time.time()
+            self.schedule_reset()
     
     def select_device(self, device_name):
         #Select a specific audio device by name#
@@ -152,6 +173,7 @@ class TappieController:
                 # Process battery level
                 try:
                     self.handleBatteryLevel(batteryLevel)
+                    self.updateToolTip(batteryLevel)
                 except Exception as e:
                     print(f"Error handling battery level: {e}")
             else:
@@ -215,6 +237,7 @@ class TappieController:
         
         if button_name != "0":
             self.ahk.sound_set("+1", device_number=self.get_device_index(button_name), component_type="MASTER", control_type="MUTE")
+            self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
 
 
     def cleanup(self):

@@ -19,6 +19,7 @@
 #include <ESP32Encoder.h>
 #include <OneButton.h>
 #include <esp_sleep.h>
+#include <WiFi.h>
 
 // ===== PIN DEFINITIONS =====
 #define ENCODER_PIN_DT 32
@@ -230,7 +231,7 @@ void setup()
     delay(100); // Small delay for stability
     enterDeepSleep();
   }
-
+  WiFi.mode(WIFI_OFF);
   // Continue with normal setup
   btStop(); // Disable classic Bluetooth to save power
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
