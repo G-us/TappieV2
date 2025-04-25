@@ -30,33 +30,45 @@
 #define ChatButtonPin 18
 #define MasterButtonPin 22
 
-// ===== MediaButton Declarations =====
-OneButton AuxButton(AuxButtonPin, true, true); // true: active low, true: enable internal pullup
-OneButton GamingButton(GamingButtonPin, true, true); // true: active low, true: enable internal pullup
-OneButton MediaButton(MediaButtonPin, true, true); // true: active low, true: enable internal pullup
-OneButton ChatButton(ChatButtonPin, true, true); // true: active low, true: enable internal pullup
-OneButton MasterButton(MasterButtonPin, true, true); // true: active low, true: enable internal pullup
-
 // ===== BLE DEFINITIONS =====
 #define BLE_DEVICE_NAME "TappieTest"
 #define SERVICE_UUID "738b66f1-91b7-4f25-8ab8-31d38d56541a"
 #define ENC_POS_UUID "a9c8c7b4-fb55-4d27-99e4-2c14b5812546"
 #define ENC_BUTTON_UUID "0c2f5fbe-c20f-49ec-8c7c-ce0c9358e574"
-#define MEDIA_BUTTON_UUID "9ff67916-665f-4489-b257-46d118b1e5eb"
+#define MEDIA_SINGLEBUTTON_UUID "9ff67916-665f-4489-b257-46d118b1e5eb"
+#define MEDIA_DOUBLEBUTTON_UUID "66f1ab02-c93d-44fe-8ca9-5e8bdbb2fe80"
 
 // ===== TIMING CONSTANTS =====
 #define AUTO_RESET_TIMEOUT 5000 // 5 seconds in milliseconds
 #define BUTTON_NOTIFY_DELAY 100 // 100ms delay after button notifications
 
+// ===== MEDIA BUTTON DEFINITIONS =====
+struct MediaButton
+{
+  const char *name;
+  uint8_t pin;
+  OneButton button;
+};
+
 // ===== GLOBAL OBJECTS =====
 ESP32Encoder encoder;
-OneButton encButton(ENCODER_PIN_SW, true, true); // true: active low, true: enable internal pullup
+OneButton encButton(ENCODER_PIN_SW, true, true); // active low, enable internal pullup
 
 // BLE server and characteristics
 BLEServer *pServer = NULL;
 BLECharacteristic *encPosChara = NULL;
 BLECharacteristic *encButtonChara = NULL;
 BLECharacteristic *mediaButtonChara = NULL;
+BLECharacteristic *mediaDoubleButtonChara = NULL;
+
+// Media buttons array
+MediaButton mediaButtons[] = {
+    {"Aux", AuxButtonPin, OneButton(AuxButtonPin, true, true)},
+    {"Gaming", GamingButtonPin, OneButton(GamingButtonPin, true, true)},
+    {"Media", MediaButtonPin, OneButton(MediaButtonPin, true, true)},
+    {"Chat", ChatButtonPin, OneButton(ChatButtonPin, true, true)},
+    {"Master", MasterButtonPin, OneButton(MasterButtonPin, true, true)}};
+const int NUM_MEDIA_BUTTONS = sizeof(mediaButtons) / sizeof(mediaButtons[0]);
 
 // ===== STATE VARIABLES =====
 bool deviceConnected = false;
@@ -74,12 +86,89 @@ void setupBLE();
 void setupEncoder();
 void setupMediaButtons();
 void resetEncoder();
-void encButtonSingleClick();
-void encButtonDoubleClick();
-void encButtonMultiClick();
-void encButtonLongPressStop();
 void handleConnectionChanges();
-void mediaButtonClickHandler(const char* buttonName);
+String getBatteryLevel();
+void sendNotification(BLECharacteristic *characteristic, const char *value);
+
+/**
+ * Helper function to send BLE notifications with auto-reset
+ */
+void sendNotification(BLECharacteristic *characteristic, const char *value)
+{
+  if (!deviceConnected)
+    return;
+
+  characteristic->setValue(value);
+  characteristic->notify();
+
+  // If this is a button action (not a position value), reset after delay
+  if (characteristic == encButtonChara || characteristic == mediaButtonChara)
+  {
+    delay(BUTTON_NOTIFY_DELAY);
+    characteristic->setValue("0");
+    characteristic->notify();
+  }
+}
+
+// Add this function before setupMediaButtons()
+void buttonClickCallback(void *parameter)
+{
+  int buttonIndex = *((int *)parameter);
+  const char *buttonName = mediaButtons[buttonIndex].name;
+
+  Serial.print("Button clicked: ");
+  Serial.println(buttonName);
+
+  if (deviceConnected)
+  {
+    sendNotification(mediaButtonChara, buttonName);
+  }
+}
+
+void buttonDoubleClickCallback(void *parameter)
+{
+  int buttonIndex = *((int *)parameter);
+  const char *buttonName = mediaButtons[buttonIndex].name;
+
+  Serial.print("Button double clicked: ");
+  Serial.println(buttonName);
+
+  if (deviceConnected)
+  {
+    sendNotification(mediaDoubleButtonChara, buttonName);
+  }
+}
+
+/**
+ * Setup media buttons with consistent configuration
+ */
+void setupMediaButtons()
+{
+  // Static array to store button indices - must be static to persist!
+  static int indices[NUM_MEDIA_BUTTONS];
+
+  for (int i = 0; i < NUM_MEDIA_BUTTONS; i++)
+  {
+    pinMode(mediaButtons[i].pin, INPUT_PULLUP);
+
+    // Store the button index in our static array
+    indices[i] = i;
+
+    // Use the parameterized version of attachClick with the index pointer
+    mediaButtons[i].button.attachClick(buttonClickCallback, &indices[i]);
+    mediaButtons[i].button.attachDoubleClick(buttonDoubleClickCallback, &indices[i]);
+  }
+
+  Serial.println("Media buttons initialized");
+}
+
+String getBatteryLevel()
+{
+  int batteryLevel = random(0, 100); // Random battery level for simulation
+  // Use a proper separator format: " batteryLevel=" followed by the value
+  String batteryStr = String(" " + String(batteryLevel));
+  return batteryStr;
+}
 
 // ===== BLE CALLBACKS =====
 /**
@@ -91,12 +180,14 @@ class MyServerCallbacks : public BLEServerCallbacks
   {
     deviceConnected = true;
     Serial.println("Device connected");
+    Serial.println("Device connected at: " + String(millis()));
   };
 
   void onDisconnect(BLEServer *pServer)
   {
     deviceConnected = false;
     Serial.println("Device disconnected");
+    Serial.println("Device disconnected at: " + String(millis()));
   }
 };
 
@@ -107,55 +198,20 @@ void setup()
   Serial.begin(115200);
   Serial.println("Starting TappieV2 BLE Server...");
 
-  // Reduce CPU frequency to save power
+  btStop(); // Disable classic Bluetooth to save power
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
   setCpuFrequencyMhz(80); // Default is 240MHz
 
-  // Initialize BLE
+  // Initialize BLE, encoder and buttons
   setupBLE();
-
-  // Initialize encoder and button
   setupEncoder();
-
   setupMediaButtons();
 
   // Initialize activity timer
   lastActivityTime = millis();
 
   Serial.println("Initialization complete - ready for connections");
-}
-
-void setupMediaButtons()
-{
-  pinMode(AuxButtonPin, INPUT_PULLUP);
-  pinMode(GamingButtonPin, INPUT_PULLUP);
-  pinMode(MediaButtonPin, INPUT_PULLUP);
-  pinMode(ChatButtonPin, INPUT_PULLUP);
-  pinMode(MasterButtonPin, INPUT_PULLUP);
-
-  // Use lambda functions to pass the button name to the handler
-  AuxButton.attachClick([]() { mediaButtonClickHandler("Aux"); });
-  GamingButton.attachClick([]() { mediaButtonClickHandler("Gaming"); });
-  MediaButton.attachClick([]() { mediaButtonClickHandler("Media"); });
-  ChatButton.attachClick([]() { mediaButtonClickHandler("Chat"); });
-  MasterButton.attachClick([]() { mediaButtonClickHandler("Master"); });
-
-  Serial.println("Media buttons initialized");
-}
-
-/**
- * Generic button click handler that processes clicks for all buttons
- * @param buttonName Name of the button to include in notifications
- */
-void mediaButtonClickHandler(const char* buttonName) 
-{
-  Serial.print("Button clicked: ");
-  Serial.println(buttonName);
-
-  if (deviceConnected) 
-  {
-    mediaButtonChara->setValue(buttonName);
-    mediaButtonChara->notify();
-  }
 }
 
 // ===== BLE SETUP =====
@@ -166,7 +222,7 @@ void setupBLE()
 {
   // Create the BLE Device
   BLEDevice::init(BLE_DEVICE_NAME);
-  BLEDevice::setPower(ESP_PWR_LVL_N12); // -12dBm, lowest power
+  BLEDevice::setPower(ESP_PWR_LVL_N12);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -175,33 +231,43 @@ void setupBLE()
   // Create the BLE Service
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  // Create Encoder Position Characteristic
+  // Create characteristics with consistent configuration
   encPosChara = pService->createCharacteristic(
       ENC_POS_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_NOTIFY);
 
-  encPosChara->addDescriptor(new BLE2902());
-  encPosChara->setValue("0"); // Initial value
-
-  // Create Button Action Characteristic
   encButtonChara = pService->createCharacteristic(
       ENC_BUTTON_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_NOTIFY);
 
-  encButtonChara->addDescriptor(new BLE2902());
-  encButtonChara->setValue("0"); // Initial value
-
   mediaButtonChara = pService->createCharacteristic(
-      MEDIA_BUTTON_UUID,
+      MEDIA_SINGLEBUTTON_UUID,
       BLECharacteristic::PROPERTY_READ |
           BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_NOTIFY);
+
+  mediaDoubleButtonChara = pService->createCharacteristic(
+      MEDIA_DOUBLEBUTTON_UUID,
+      BLECharacteristic::PROPERTY_READ |
+          BLECharacteristic::PROPERTY_WRITE |
+          BLECharacteristic::PROPERTY_NOTIFY);
+
+  // Add descriptor and set initial values
+  encPosChara->addDescriptor(new BLE2902());
+  encButtonChara->addDescriptor(new BLE2902());
   mediaButtonChara->addDescriptor(new BLE2902());
-  mediaButtonChara->setValue("Master"); // Initial value
+  mediaDoubleButtonChara->addDescriptor(new BLE2902());
+
+
+  encPosChara->setValue(("0" + getBatteryLevel()).c_str());
+  encButtonChara->setValue("0");
+  mediaButtonChara->setValue("Master");
+  mediaDoubleButtonChara->setValue("0");
+
 
   // Start the service
   pService->start();
@@ -210,8 +276,8 @@ void setupBLE()
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinInterval(0x100); // 160ms
-  pAdvertising->setMaxInterval(0x200); // 320ms
+  pAdvertising->setMinInterval(0x20); // 40ms
+  pAdvertising->setMaxInterval(0x40);
   BLEDevice::startAdvertising();
 
   Serial.println("BLE server ready for connections");
@@ -228,21 +294,32 @@ void setupEncoder()
   pinMode(ENCODER_PIN_CLK, INPUT_PULLUP);
   pinMode(ENCODER_PIN_SW, INPUT_PULLUP);
 
-  // Configure ESP32Encoder for interrupt handling
+  // Configure ESP32Encoder
   ESP32Encoder::useInternalWeakPullResistors = puType::up;
-
-  // Initialize encoder with half quadrature mode
   encoder.attachHalfQuad(ENCODER_PIN_DT, ENCODER_PIN_CLK);
   encoder.clearCount();
-
-  // Set encoder filter to reduce noise and debounce
-  encoder.setFilter(1023);
+  encoder.setFilter(1023); // Set filter to reduce noise
 
   // Configure button handlers for different actions
-  encButton.attachClick(encButtonSingleClick);
-  encButton.attachDoubleClick(encButtonDoubleClick);
-  encButton.attachMultiClick(encButtonMultiClick);
-  encButton.attachLongPressStop(encButtonLongPressStop);
+  encButton.attachClick([]()
+                        {
+    Serial.println("Button: Single click");
+    if (deviceConnected) sendNotification(encButtonChara, "single click"); });
+
+  encButton.attachDoubleClick([]()
+                              {
+    Serial.println("Button: Double click");
+    if (deviceConnected) sendNotification(encButtonChara, "double click"); });
+
+  encButton.attachMultiClick([]()
+                             {
+    Serial.println("Button: Multi click");
+    if (deviceConnected) sendNotification(encButtonChara, "multi click"); });
+
+  encButton.attachLongPressStop([]()
+                                {
+    Serial.println("Button: Long press");
+    if (deviceConnected) sendNotification(encButtonChara, "long press release"); });
 
   Serial.println("Encoder and button initialized with interrupts");
 }
@@ -261,85 +338,14 @@ void resetEncoder()
   // Send reset notification to connected client
   if (deviceConnected)
   {
-    encPosChara->setValue("0");
+    String resetStr = "reset" + getBatteryLevel();
+    Serial.println(resetStr.c_str());
+    encPosChara->setValue(resetStr.c_str());
     encPosChara->notify();
   }
 
   // Update the activity timer
   lastActivityTime = millis();
-}
-
-// ===== BUTTON HANDLERS =====
-/**
- * Handle single click event
- */
-void encButtonSingleClick()
-{
-  Serial.println("Button: Single click");
-
-  if (deviceConnected)
-  {
-    encButtonChara->setValue("single click");
-    encButtonChara->notify();
-
-    delay(BUTTON_NOTIFY_DELAY);
-    encButtonChara->setValue("0");
-    encButtonChara->notify();
-  }
-}
-
-/**
- * Handle double click event
- */
-void encButtonDoubleClick()
-{
-  Serial.println("Button: Double click");
-
-  if (deviceConnected)
-  {
-    encButtonChara->setValue("double click");
-    encButtonChara->notify();
-
-    delay(BUTTON_NOTIFY_DELAY);
-    encButtonChara->setValue("0");
-    encButtonChara->notify();
-  }
-}
-
-/**
- * Handle multi-click (≥3 clicks) event
- */
-void encButtonMultiClick()
-{
-  Serial.println("Button: Multi click");
-
-  if (deviceConnected)
-  {
-    encButtonChara->setValue("multi click");
-    encButtonChara->notify();
-
-    delay(BUTTON_NOTIFY_DELAY);
-    encButtonChara->setValue("0");
-    encButtonChara->notify();
-  }
-}
-
-/**
- * Handle long press event
- */
-void encButtonLongPressStop()
-{
-  Serial.println("Button: Long press");
-
-  if (deviceConnected)
-  {
-    encButtonChara->setValue("long press stop");
-    encButtonChara->notify();
-
-    delay(BUTTON_NOTIFY_DELAY);
-    encButtonChara->setValue("0");
-    encButtonChara->notify();
-  }
 }
 
 /**
@@ -350,10 +356,7 @@ void handleConnectionChanges()
   // Handle disconnection
   if (!deviceConnected && oldDeviceConnected)
   {
-    // Give BLE stack time to get ready for new connections
-    delay(500);
-
-    // Restart advertising
+    delay(500); // Give BLE stack time to get ready
     pServer->startAdvertising();
     Serial.println("Restarting advertising");
     oldDeviceConnected = deviceConnected;
@@ -367,7 +370,9 @@ void handleConnectionChanges()
 
     // When client connects, send current position
     String encPositionStr = String(currentEncPosition);
-    encPosChara->setValue(encPositionStr.c_str());
+    String combinedStr = encPositionStr + getBatteryLevel();
+    Serial.println(combinedStr.c_str());
+    encPosChara->setValue(combinedStr.c_str());
     encPosChara->notify();
   }
 }
@@ -377,26 +382,29 @@ void loop()
 {
   // Process button events
   encButton.tick();
-  AuxButton.tick();
-  GamingButton.tick();
-  MediaButton.tick();
-  ChatButton.tick();
-  MasterButton.tick();
-  
+
+  // Process media button events
+  for (int i = 0; i < NUM_MEDIA_BUTTONS; i++)
+  {
+    mediaButtons[i].button.tick();
+  }
+
   // Get current encoder position
   currentEncPosition = encoder.getCount() / 2;
 
   // Handle encoder position changes
   if (currentEncPosition != prevEncPosition)
   {
-    // Update the activity timer
+    // Update activity timer
     lastActivityTime = millis();
 
     if (deviceConnected)
     {
       // Convert position to string and notify client
       String encPositionStr = String(currentEncPosition);
-      encPosChara->setValue(encPositionStr.c_str());
+      String combinedStr = encPositionStr + getBatteryLevel();
+      Serial.println(combinedStr.c_str());
+      encPosChara->setValue(combinedStr.c_str());
       encPosChara->notify();
 
       Serial.print("Encoder position: ");
@@ -407,7 +415,7 @@ void loop()
     prevEncPosition = currentEncPosition;
   }
 
-  // Auto-reset encoder after inactivity period (only if not at zero)
+  // Auto-reset encoder after inactivity (only if not at zero)
   if (millis() - lastActivityTime > AUTO_RESET_TIMEOUT && currentEncPosition != 0)
   {
     resetEncoder();

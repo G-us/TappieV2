@@ -16,7 +16,7 @@ ENC_BUTTON_UUID = "0c2f5fbe-c20f-49ec-8c7c-ce0c9358e574"
 MEDIA_SINGLEBUTTON_UUID = "9ff67916-665f-4489-b257-46d118b1e5eb"
 MEDIA_DOUBLEBUTTON_UUID = "66f1ab02-c93d-44fe-8ca9-5e8bdbb2fe80"
 
-DEVICE_NAME = "TappieTest"
+DEVICE_NAME = "TappieV2"
 
 # Application constants
 RECONNECT_DELAY = 15  # seconds
@@ -198,7 +198,6 @@ class TappieController:
         elif button_action == "multi click":
             self.ahk.key_press("Media_Prev")
         elif button_action == "long press release":
-            # Uncomment to launch Spotify
             self.ahk.run_script('Run "C:\\Users\\henry\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Spotify.lnk"')
     
     def handle_media_button(self, button_name):

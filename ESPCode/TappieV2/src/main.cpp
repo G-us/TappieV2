@@ -18,11 +18,14 @@
 #include <BLE2902.h>
 #include <ESP32Encoder.h>
 #include <OneButton.h>
+#include <esp_sleep.h>
 
 // ===== PIN DEFINITIONS =====
 #define ENCODER_PIN_DT 32
 #define ENCODER_PIN_CLK 35
 #define ENCODER_PIN_SW 34
+
+gpio_num_t reedSwitchPin = GPIO_NUM_33; // GPIO pin for reed switch
 
 #define AuxButtonPin 2
 #define GamingButtonPin 4
@@ -31,7 +34,7 @@
 #define MasterButtonPin 22
 
 // ===== BLE DEFINITIONS =====
-#define BLE_DEVICE_NAME "TappieTest"
+#define BLE_DEVICE_NAME "TappieV2"
 #define SERVICE_UUID "738b66f1-91b7-4f25-8ab8-31d38d56541a"
 #define ENC_POS_UUID "a9c8c7b4-fb55-4d27-99e4-2c14b5812546"
 #define ENC_BUTTON_UUID "0c2f5fbe-c20f-49ec-8c7c-ce0c9358e574"
@@ -81,6 +84,12 @@ int currentEncPosition = 0;
 // Timer for auto-reset
 unsigned long lastActivityTime = 0;
 
+// Add these variables to the STATE VARIABLES section
+bool prevReedState = true;               // Store previous reed switch state
+RTC_DATA_ATTR bool wasConnected = false; // Persistent through deep sleep
+const int REED_CHECK_INTERVAL = 500;     // Check reed switch every 500ms
+unsigned long lastReedCheckTime = 0;
+
 // ===== FUNCTION DECLARATIONS =====
 void setupBLE();
 void setupEncoder();
@@ -88,6 +97,7 @@ void setupMediaButtons();
 void resetEncoder();
 void handleConnectionChanges();
 String getBatteryLevel();
+void enterDeepSleep();
 void sendNotification(BLECharacteristic *characteristic, const char *value);
 
 /**
@@ -164,7 +174,7 @@ void setupMediaButtons()
 
 String getBatteryLevel()
 {
-  int batteryLevel = random(0, 100); // Random battery level for simulation
+  int batteryLevel = 49; // Random battery level for simulation
   // Use a proper separator format: " batteryLevel=" followed by the value
   String batteryStr = String(" " + String(batteryLevel));
   return batteryStr;
@@ -196,12 +206,36 @@ void setup()
 {
   // Initialize serial communication
   Serial.begin(115200);
+
+  // Check wakeup reason
+  esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
+  if (wakeupReason == ESP_SLEEP_WAKEUP_EXT1)
+  {
+    Serial.println("Woke up from deep sleep due to reed switch HIGH");
+  }
+  else
+  {
+    Serial.println("Initial boot");
+  }
+
   Serial.println("Starting TappieV2 BLE Server...");
 
+  // Configure reed switch
+  pinMode(reedSwitchPin, INPUT_PULLUP); // Set reed switch pin as input with pull-up resistor
+
+  // Check initial reed switch state - go back to sleep if LOW
+  if (digitalRead(reedSwitchPin) == LOW)
+  {
+    Serial.println("Reed switch still LOW - going back to sleep");
+    delay(100); // Small delay for stability
+    enterDeepSleep();
+  }
+
+  // Continue with normal setup
   btStop(); // Disable classic Bluetooth to save power
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-
-  setCpuFrequencyMhz(80); // Default is 240MHz
+  setCpuFrequencyMhz(80);
+  esp_sleep_enable_ext1_wakeup(reedSwitchPin, ESP_EXT1_WAKEUP_ANY_HIGH); // Enable wakeup on reed switch
 
   // Initialize BLE, encoder and buttons
   setupBLE();
@@ -262,12 +296,10 @@ void setupBLE()
   mediaButtonChara->addDescriptor(new BLE2902());
   mediaDoubleButtonChara->addDescriptor(new BLE2902());
 
-
   encPosChara->setValue(("0" + getBatteryLevel()).c_str());
   encButtonChara->setValue("0");
   mediaButtonChara->setValue("Master");
   mediaDoubleButtonChara->setValue("0");
-
 
   // Start the service
   pService->start();
@@ -377,6 +409,37 @@ void handleConnectionChanges()
   }
 }
 
+// Add this function before loop()
+void enterDeepSleep()
+{
+  Serial.println("Reed switch LOW - Entering deep sleep mode");
+
+  // Save state for wake-up
+  wasConnected = deviceConnected;
+
+  // Disconnect BLE if connected to prevent issues on wake
+  if (deviceConnected)
+  {
+    Serial.println("Disconnecting BLE before sleep");
+    pServer->disconnect(pServer->getConnId()); // Disconnect the client
+    // stop ble
+    BLEDevice::deinit(true); // Deinitialize BLE stack
+    // Client gets disconnected automatically when going to sleep
+  }
+
+  // Configure wakeup on HIGH state of reed switch (bitmask format)
+  uint64_t wakeupBitMask = 1ULL << reedSwitchPin;
+  esp_sleep_enable_ext1_wakeup(wakeupBitMask, ESP_EXT1_WAKEUP_ANY_HIGH);
+
+  Serial.println("Going to sleep now");
+  Serial.flush(); // Make sure all serial output is sent
+
+  // Enter deep sleep
+  esp_deep_sleep_start();
+
+  // Code never reaches here - after waking, execution restarts at beginning of setup()
+}
+
 // ===== MAIN LOOP =====
 void loop()
 {
@@ -423,6 +486,24 @@ void loop()
 
   // Handle BLE connection changes
   handleConnectionChanges();
+
+  // Check reed switch state periodically to save power
+  if (millis() - lastReedCheckTime > REED_CHECK_INTERVAL)
+  {
+    lastReedCheckTime = millis();
+
+    // Read current reed switch state
+    bool reedState = digitalRead(reedSwitchPin);
+
+    // If reed switch becomes LOW, enter deep sleep
+    if (reedState == LOW && prevReedState == HIGH)
+    {
+      Serial.println("Reed switch changed to LOW");
+      enterDeepSleep();
+    }
+
+    prevReedState = reedState;
+  }
 
   // Small delay to prevent CPU hogging
   delay(5);
