@@ -87,6 +87,7 @@ void setupEncoder();
 void setupMediaButtons();
 void resetEncoder();
 void handleConnectionChanges();
+String getBatteryLevel();
 void sendNotification(BLECharacteristic *characteristic, const char *value);
 
 /**
@@ -110,26 +111,30 @@ void sendNotification(BLECharacteristic *characteristic, const char *value)
 }
 
 // Add this function before setupMediaButtons()
-void buttonClickCallback(void* parameter) {
-  int buttonIndex = *((int*)parameter);
-  const char* buttonName = mediaButtons[buttonIndex].name;
-  
+void buttonClickCallback(void *parameter)
+{
+  int buttonIndex = *((int *)parameter);
+  const char *buttonName = mediaButtons[buttonIndex].name;
+
   Serial.print("Button clicked: ");
   Serial.println(buttonName);
-  
-  if (deviceConnected) {
+
+  if (deviceConnected)
+  {
     sendNotification(mediaButtonChara, buttonName);
   }
 }
 
-void buttonDoubleClickCallback(void* parameter) {
-  int buttonIndex = *((int*)parameter);
-  const char* buttonName = mediaButtons[buttonIndex].name;
-  
+void buttonDoubleClickCallback(void *parameter)
+{
+  int buttonIndex = *((int *)parameter);
+  const char *buttonName = mediaButtons[buttonIndex].name;
+
   Serial.print("Button double clicked: ");
   Serial.println(buttonName);
-  
-  if (deviceConnected) {
+
+  if (deviceConnected)
+  {
     sendNotification(mediaDoubleButtonChara, buttonName);
   }
 }
@@ -141,20 +146,28 @@ void setupMediaButtons()
 {
   // Static array to store button indices - must be static to persist!
   static int indices[NUM_MEDIA_BUTTONS];
-  
+
   for (int i = 0; i < NUM_MEDIA_BUTTONS; i++)
   {
     pinMode(mediaButtons[i].pin, INPUT_PULLUP);
-    
+
     // Store the button index in our static array
     indices[i] = i;
-    
+
     // Use the parameterized version of attachClick with the index pointer
     mediaButtons[i].button.attachClick(buttonClickCallback, &indices[i]);
     mediaButtons[i].button.attachDoubleClick(buttonDoubleClickCallback, &indices[i]);
   }
 
   Serial.println("Media buttons initialized");
+}
+
+String getBatteryLevel()
+{
+  int batteryLevel = random(0, 100); // Random battery level for simulation
+  // Use a proper separator format: " batteryLevel=" followed by the value
+  String batteryStr = String(" " + String(batteryLevel));
+  return batteryStr;
 }
 
 // ===== BLE CALLBACKS =====
@@ -209,7 +222,7 @@ void setupBLE()
 {
   // Create the BLE Device
   BLEDevice::init(BLE_DEVICE_NAME);
-  BLEDevice::setPower(ESP_PWR_LVL_P7);
+  BLEDevice::setPower(ESP_PWR_LVL_N12);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -249,10 +262,12 @@ void setupBLE()
   mediaButtonChara->addDescriptor(new BLE2902());
   mediaDoubleButtonChara->addDescriptor(new BLE2902());
 
-  encPosChara->setValue("0");
+
+  encPosChara->setValue(("0" + getBatteryLevel()).c_str());
   encButtonChara->setValue("0");
   mediaButtonChara->setValue("Master");
   mediaDoubleButtonChara->setValue("0");
+
 
   // Start the service
   pService->start();
@@ -323,7 +338,9 @@ void resetEncoder()
   // Send reset notification to connected client
   if (deviceConnected)
   {
-    encPosChara->setValue("0");
+    String resetStr = "reset" + getBatteryLevel();
+    Serial.println(resetStr.c_str());
+    encPosChara->setValue(resetStr.c_str());
     encPosChara->notify();
   }
 
@@ -353,7 +370,9 @@ void handleConnectionChanges()
 
     // When client connects, send current position
     String encPositionStr = String(currentEncPosition);
-    encPosChara->setValue(encPositionStr.c_str());
+    String combinedStr = encPositionStr + getBatteryLevel();
+    Serial.println(combinedStr.c_str());
+    encPosChara->setValue(combinedStr.c_str());
     encPosChara->notify();
   }
 }
@@ -383,7 +402,9 @@ void loop()
     {
       // Convert position to string and notify client
       String encPositionStr = String(currentEncPosition);
-      encPosChara->setValue(encPositionStr.c_str());
+      String combinedStr = encPositionStr + getBatteryLevel();
+      Serial.println(combinedStr.c_str());
+      encPosChara->setValue(combinedStr.c_str());
       encPosChara->notify();
 
       Serial.print("Encoder position: ");

@@ -1,13 +1,12 @@
-"""
-Tappie V2 BLE Client Application
-Connects to Tappie device and controls system volume based on rotary encoder inputs.
-"""
 import asyncio
 import time
 import threading
 from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 from ahk import AHK
+
+from win11toast import toast_async
+from win11toast import notify
 
 # ===== CONFIGURATION =====
 # BLE UUIDs
@@ -16,6 +15,7 @@ ENC_POS_UUID = "a9c8c7b4-fb55-4d27-99e4-2c14b5812546"
 ENC_BUTTON_UUID = "0c2f5fbe-c20f-49ec-8c7c-ce0c9358e574"
 MEDIA_SINGLEBUTTON_UUID = "9ff67916-665f-4489-b257-46d118b1e5eb"
 MEDIA_DOUBLEBUTTON_UUID = "66f1ab02-c93d-44fe-8ca9-5e8bdbb2fe80"
+
 DEVICE_NAME = "TappieTest"
 
 # Application constants
@@ -33,19 +33,21 @@ AUDIO_DEVICES = {
 }
 
 class TappieController:
-    """Main controller class for Tappie device interactions"""
+#Main controller class for Tappie device interactions
     
 
     def __init__(self):
-        """Initialize the controller"""
+        #Initialize the controller
         self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
+        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
+        self.ahk.menu_tray_tooltip("Tappie V2")
         self.selected_device = "Master"
         self.prev_enc_position = 0
         self.reset_timer = None
         self.last_volume_change = time.time()
         
     def schedule_reset(self):
-        """Schedule a reset to Master after RESET_DELAY seconds"""
+        #Schedule a reset to Master after RESET_DELAY seconds
         if self.reset_timer:
             self.reset_timer.cancel()
         
@@ -54,16 +56,38 @@ class TappieController:
         self.reset_timer.start()
     
     def _reset_to_master(self):
-        """Reset selected device to Master"""
+        #Reset selected device to Master#
         self.selected_device = "Master"
         print("Inactivity detected - Reset to Master volume control")
     
     def roundToFive(self, x):
-        """Round a number to the nearest multiple of 5"""
+        #Round a number to the nearest multiple of 5#
         return round(x / 5) * 5
+    
+    def handleBatteryLevel(self, batteryLevel):
+        # Handle battery level notifications with better error handling
+        try:
+            # Try to convert to integer
+            batteryLevel = int(batteryLevel)
+            print(f"Battery level: {batteryLevel}%")
+            self.ahk.menu_tray_tooltip(f"Battery level: {batteryLevel}%")
+            
+            # Handle low battery notification
+            if batteryLevel < 20:
+                print("Battery low!")
+                notify("Battery low!", "aaah get freaky", audio={'silent': 'true'})
+                self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBattery.ico")
+                self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+            else:
+                # Reset icon if battery is okay
+                self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
+        except ValueError:
+            print(f"Error: Invalid battery level format: {batteryLevel}")
+        except Exception as e:
+            print(f"Error processing battery level: {e}")
 
     def get_device_index(self, device_name):
-        """Get the device index for the currently selected device"""
+        #Get the device index for the currently selected device#
         if device_name == None:
             device_id = AUDIO_DEVICES.get(self.selected_device)
         else:
@@ -75,7 +99,10 @@ class TappieController:
         return device_id
     
     def adjust_volume(self, increase=True):
-        """Adjust volume up or down based on the parameter"""
+        #Adjust volume up or down based on the parameter#
+        if self.reset_timer:
+            self.reset_timer.cancel()
+            self.reset_timer = None
         device_index = self.get_device_index(None)
         current_volume = self.ahk.sound_get(device_number=device_index, component_type="MASTER", control_type="VOLUME")
         current_volume = int(float(current_volume))
@@ -99,7 +126,7 @@ class TappieController:
         self.schedule_reset()
     
     def select_device(self, device_name):
-        """Select a specific audio device by name"""
+        #Select a specific audio device by name#
         if device_name in AUDIO_DEVICES:
             self.selected_device = device_name
             print(f"Selected device: {device_name}")
@@ -108,30 +135,59 @@ class TappieController:
             if self.reset_timer:
                 self.reset_timer.cancel()
                 self.reset_timer = None
+                self.last_volume_change = time.time()
+                self.schedule_reset()
         else:
             print(f"Unknown device: {device_name}")
     
-    def handle_encoder_position(self, position):
-        """Handle encoder position changes"""
-        position = int(position)
-        
-        if position == 0:
-            print("Encoder position is zero, ignoring...")
-            return
+    def handle_encoder_position(self, encData):
+        # Handle encoder position changes with better error handling
+        try:
+            # Split the combined string (format: "position batteryLevel")
+            parts = encData.split(" ", 1)  # Split only on first space
             
-        if position > self.prev_enc_position:
-            print(f"Encoder position increased: {position}")
-            self.adjust_volume(increase=True)
-        elif position < self.prev_enc_position:
-            print(f"Encoder position decreased: {position}")
-            self.adjust_volume(increase=False)
-        else:
-            print(f"Encoder position unchanged: {position}")
+            if len(parts) >= 2:
+                position = parts[0]
+                batteryLevel = parts[1]
+                # Process battery level
+                try:
+                    self.handleBatteryLevel(batteryLevel)
+                except Exception as e:
+                    print(f"Error handling battery level: {e}")
+            else:
+                # If there's no battery level data, just use the position
+                position = parts[0]
+                print("Warning: No battery level data received")
             
-        self.prev_enc_position = position
+            # Process position
+            if position == "reset":
+                print("Encoder position reset")
+                self.prev_enc_position = 0
+                return
+            
+            # Convert position to integer with error handling
+            try:
+                current_position = int(position)
+                
+                if current_position > self.prev_enc_position:
+                    print(f"Encoder position increased: {position}")
+                    self.adjust_volume(increase=True)
+                elif current_position < self.prev_enc_position:
+                    print(f"Encoder position decreased: {position}")
+                    self.adjust_volume(increase=False)
+                else:
+                    print(f"Encoder position unchanged: {position}")
+                    
+                self.prev_enc_position = current_position
+                
+            except ValueError:
+                print(f"Error: Could not convert position '{position}' to integer")
+                
+        except Exception as e:
+            print(f"Error processing encoder data '{encData}': {e}")
     
     def handle_encoder_button(self, button_action):
-        """Handle encoder button actions"""
+        #Handle encoder button actions#
         print(f"Received button action: {button_action}")
         
         if button_action == "single click":
@@ -142,41 +198,42 @@ class TappieController:
         elif button_action == "multi click":
             self.ahk.key_press("Media_Prev")
         elif button_action == "long press release":
-            print("Long press detected - special action could go here")
             # Uncomment to launch Spotify
             self.ahk.run_script('Run "C:\\Users\\henry\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Spotify.lnk"')
     
     def handle_media_button(self, button_name):
-        """Handle media button actions"""
+        #Handle media button actions#
         print(f"Received media button: {button_name}")
         
         if button_name != "0":  # Ignore release notifications
             self.select_device(button_name)
+            notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'})
             self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\MediaChange.wav")
         
     def handle_media_double_button(self, button_name):
-        """Handle double media button actions"""
+        #Handle double media button actions#
         print(f"Received double media button: {button_name}")
         
         if button_name != "0":
             self.ahk.sound_set("+1", device_number=self.get_device_index(button_name), component_type="MASTER", control_type="MUTE")
+
+
     def cleanup(self):
-        """Clean up resources"""
+        #Clean up resources#
         if self.reset_timer:
             self.reset_timer.cancel()
             self.reset_timer = None
 
 
 class BLEClient:
-    """BLE client that connects to the Tappie device"""
+    #BLE client that connects to the Tappie device#
     
     def __init__(self, controller):
-        """Initialize with a controller instance"""
+        #Initialize with a controller instance#
         self.controller = controller
-        self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
         
     async def find_device(self):
-        """Find the BLE device by name"""
+        #Find the BLE device by name#
         print(f"Scanning for {DEVICE_NAME}...")
         device = await BleakScanner.find_device_by_name(DEVICE_NAME)
         
@@ -192,7 +249,7 @@ class BLEClient:
         return device
     
     async def connect_with_retry(self):
-        """Connect to the device with retry mechanism"""
+        #Connect to the device with retry mechanism#
         while True:
             device = await self.find_device()
             if not device:
@@ -201,9 +258,10 @@ class BLEClient:
                 continue
             
             try:
-                client = BleakClient(device)
+                client = BleakClient(device, winrt=dict(use_cached_services=False))
                 await client.connect()
                 print(f"Connected: {client.is_connected}")
+                await toast_async("Connection Established with Tappie V2", "aaah get freaky")
                 return client
             except BleakError as e:
                 print(f"Connection error: {e}")
@@ -211,7 +269,7 @@ class BLEClient:
                 await asyncio.sleep(RECONNECT_DELAY)
     
     def setup_notification_handlers(self, client):
-        """Set up notification handlers for the client"""
+        #Set up notification handlers for the client#
         async def enc_pos_handler(_, data):
             self.controller.handle_encoder_position(data.decode())
             
@@ -224,6 +282,7 @@ class BLEClient:
         async def media_double_button_handler(_, data):
             self.controller.handle_media_double_button(data.decode())
             
+            
         return {
             ENC_POS_UUID: enc_pos_handler,
             ENC_BUTTON_UUID: enc_button_handler,
@@ -232,29 +291,39 @@ class BLEClient:
         }
     
     async def run_client(self, client):
-        """Run the client once connected"""
+        #Run the client once connected#
         handlers = self.setup_notification_handlers(client)
         try:
-            # Get services
+            # Get services with detailed property information
             services = await client.get_services()
             for service in services:
                 print(f"Service: {service.uuid}")
                 for char in service.characteristics:
                     print(f"  Characteristic: {char.uuid}")
                     print(f"    Properties: {char.properties}")
-            
-            # Start notifications
+                    print(f"    Has Notify: {'Notify' in char.properties}")
+        
+            # Start notifications with better error handling and delays
             for uuid, handler in handlers.items():
-                await client.start_notify(uuid, handler)
-            
+                try:
+                    print(f"Starting notification for {uuid}...")
+                    await client.start_notify(uuid, handler)
+                    print(f"Successfully started notification for {uuid}")
+                    # Add a small delay between starting each notification to prevent BLE stack issues
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    print(f"Error starting notification for {uuid}: {e}")
+                    continue
+        
             print("Listening for notifications, press Ctrl+C to stop...")
-
-            self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\OnConnect.wav")
+            
+            await toast_async("Ready to talk to Tappie V2", "aaah get freaky")
             
             # Keep checking connection
             while True:
                 if not client.is_connected:
                     print("Disconnected! Attempting to reconnect...")
+                    await toast_async("Disconnected from Tappie V2", "aaah get freaky")
                     break
                 await asyncio.sleep(0.5)
                 
@@ -272,7 +341,7 @@ class BLEClient:
                     print(f"Error during disconnect: {e}")
     
     async def main_loop(self):
-        """Main loop with connection management and reconnection logic"""
+        #Main loop with connection management and reconnection logic#
         try:
             while True:
                 # Connect with retry
@@ -292,7 +361,7 @@ class BLEClient:
 
 
 async def main():
-    """Application entry point"""
+    #Application entry point#
     controller = TappieController()
     client = BLEClient(controller)
     

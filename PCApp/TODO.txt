@@ -1,0 +1,8 @@
+add toast on pc, when connected done
+
+add battery reporting done
+
+taskbar icon
+
+power efficient?
+
