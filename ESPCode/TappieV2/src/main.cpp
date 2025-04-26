@@ -46,6 +46,7 @@ gpio_num_t reedSwitchPin = GPIO_NUM_15; // GPIO pin for reed switch
 // ===== TIMING CONSTANTS =====
 #define AUTO_RESET_TIMEOUT 5000 // 5 seconds in milliseconds
 #define BUTTON_NOTIFY_DELAY 100 // 100ms delay after button notifications
+#define BATTERY_CHECK_INTERVAL 300000 // 1 minute in milliseconds
 
 // ===== POWER MANAGEMENT CONSTANTS =====
 #define LIGHT_SLEEP_TIMEOUT 10000  // 10 seconds of inactivity before light sleep
@@ -58,8 +59,10 @@ gpio_num_t reedSwitchPin = GPIO_NUM_15; // GPIO pin for reed switch
 // Add to STATE VARIABLES section
 int currentCpuFreq = ACTIVE_CPU_FREQ;
 
-// ===== MEDIA BUTTON DEFINITIONS =====
-struct MediaButton
+int lastBatteryCheckTime = 0; // Last time battery level was checked
+
+    // ===== MEDIA BUTTON DEFINITIONS =====
+    struct MediaButton
 {
   const char *name;
   uint8_t pin;
@@ -524,6 +527,7 @@ void loop()
   if (millis() - lastActivityTime > AUTO_RESET_TIMEOUT && currentEncPosition != 0)
   {
     Serial.println("Auto-resetting encoder position due to inactivity");
+    //Janky way to send battery level to the client but it works
     resetEncoder();
   }
 
@@ -546,6 +550,12 @@ void loop()
     }
 
     prevReedState = reedState;
+  }
+
+  if (millis() - lastBatteryCheckTime > BATTERY_CHECK_INTERVAL)
+  {
+    lastBatteryCheckTime = millis();
+    resetEncoder(); // Reset encoder position every minute
   }
 
   // Power management based on activity
