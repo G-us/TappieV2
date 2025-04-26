@@ -240,7 +240,6 @@ class MyServerCallbacks : public BLEServerCallbacks
   {
     deviceConnected = true;
     Serial.println("Device connected");
-    Serial.println("Device connected at: " + String(millis()));
   }
 
   void onDisconnect(BLEServer *pServer)

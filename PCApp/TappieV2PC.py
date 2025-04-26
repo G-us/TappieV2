@@ -160,9 +160,13 @@ class TappieController:
             if increase:
                 new_volume = current_volume + VOLUME_STEP
                 operation = "increased"
+                if new_volume >= 100:
+                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\maxVolumeSound.wav")
             else:
                 new_volume = current_volume - VOLUME_STEP
                 operation = "decreased"
+                if new_volume <= 0:
+                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\minVolumeSound.wav")
             
             # Ensure volume stays within valid range (0-100)
             new_volume = max(0, min(100, new_volume))
@@ -258,7 +262,7 @@ class TappieController:
         
         if button_name != "0":  # Ignore release notifications
             self.select_device(button_name)
-            notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'}, duration=0.5)
+            notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'})
             self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\MediaChange.wav")
         
     def handle_media_double_button(self, button_name):
