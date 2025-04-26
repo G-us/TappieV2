@@ -20,6 +20,8 @@
 #include <OneButton.h>
 #include <esp_sleep.h>
 #include <WiFi.h>
+#include <driver/periph_ctrl.h>
+#include <driver/adc.h>
 
 // ===== PIN DEFINITIONS =====
 #define ENCODER_PIN_DT 32
@@ -45,6 +47,19 @@ gpio_num_t reedSwitchPin = GPIO_NUM_33; // GPIO pin for reed switch
 // ===== TIMING CONSTANTS =====
 #define AUTO_RESET_TIMEOUT 5000 // 5 seconds in milliseconds
 #define BUTTON_NOTIFY_DELAY 100 // 100ms delay after button notifications
+
+// ===== POWER MANAGEMENT CONSTANTS =====
+#define LIGHT_SLEEP_TIMEOUT 10000  // 10 seconds of inactivity before light sleep
+#define INACTIVE_CPU_FREQ 40       // CPU MHz when inactive
+#define ACTIVE_CPU_FREQ 80         // CPU MHz when active
+#define BLE_MIN_CONN_INTERVAL 0x40 // 80ms (was 0x20 = 40ms)
+#define BLE_MAX_CONN_INTERVAL 0x80 // 160ms (was 0x40)
+#define DISABLE_UNUSED_PERIPHERALS true
+
+// Add to STATE VARIABLES section
+unsigned long lastInteractionTime = 0;
+bool inLightSleep = false;
+int currentCpuFreq = ACTIVE_CPU_FREQ;
 
 // ===== MEDIA BUTTON DEFINITIONS =====
 struct MediaButton
@@ -100,6 +115,7 @@ void handleConnectionChanges();
 String getBatteryLevel();
 void enterDeepSleep();
 void sendNotification(BLECharacteristic *characteristic, const char *value);
+class MyServerCallbacks;
 
 /**
  * Helper function to send BLE notifications with auto-reset
@@ -181,78 +197,118 @@ String getBatteryLevel()
   return batteryStr;
 }
 
-// ===== BLE CALLBACKS =====
 /**
- * Callbacks for BLE connection events
+ * Function to optimize power for unused GPIOs
  */
+void configureUnusedGPIOs()
+{
+  // List of GPIO pins not used in this application - adjust based on your hardware
+  const int unusedPins[] = {0, 12, 13, 14, 15, 16, 19, 21, 23, 25, 26, 27};
+  const int numUnusedPins = sizeof(unusedPins) / sizeof(unusedPins[0]);
+
+  // Configure unused pins as inputs with no pullups to minimize power
+  for (int i = 0; i < numUnusedPins; i++)
+  {
+    pinMode(unusedPins[i], INPUT);
+    gpio_pulldown_dis(static_cast<gpio_num_t>(unusedPins[i]));
+    gpio_pullup_dis(static_cast<gpio_num_t>(unusedPins[i]));
+  }
+
+  Serial.println("Unused GPIOs configured for power saving");
+}
+
+/**
+ * Function to disable unused peripherals
+ */
+void disableUnusedPeripherals()
+{
+  // Disable ADC
+  adc_power_release();
+
+  // Disable UART2
+  periph_module_disable(PERIPH_UART2_MODULE);
+
+  // Disable I2C if not used
+  periph_module_disable(PERIPH_I2C0_MODULE);
+  periph_module_disable(PERIPH_I2C1_MODULE);
+
+  Serial.println("Unused peripherals disabled for power saving");
+}
+
+/**
+ * Updates CPU frequency based on activity
+ */
+void updateCpuFrequency(bool active)
+{
+  if (active && currentCpuFreq != ACTIVE_CPU_FREQ)
+  {
+    setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
+    currentCpuFreq = ACTIVE_CPU_FREQ;
+    Serial.println("Set CPU to active frequency: " + String(ACTIVE_CPU_FREQ) + "MHz");
+  }
+  else if (!active && currentCpuFreq != INACTIVE_CPU_FREQ)
+  {
+    setCpuFrequencyMhz(INACTIVE_CPU_FREQ);
+    currentCpuFreq = INACTIVE_CPU_FREQ;
+    Serial.println("Set CPU to inactive frequency: " + String(INACTIVE_CPU_FREQ) + "MHz");
+  }
+}
+
+/**
+ * Enter light sleep mode but maintain BLE connection
+ */
+void enterLightSleep()
+{
+  if (inLightSleep)
+    return;
+
+  Serial.println("Entering light sleep mode");
+  inLightSleep = true;
+
+  // Configure light sleep parameters
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_ON);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_ON);
+
+  // Set up wake sources - any activity will wake us, but with a timeout
+  esp_sleep_enable_timer_wakeup(1000000); // Wake every 1 second to maintain BLE
+
+  // Actually enter light sleep
+  esp_light_sleep_start();
+
+  // We'll reach here after waking up
+  inLightSleep = false;
+  Serial.println("Exited light sleep mode");
+}
+
+/**
+ * Record interaction and update power management
+ */
+void recordInteraction()
+{
+  lastInteractionTime = millis();
+  lastActivityTime = millis(); // Update existing activity tracker
+  updateCpuFrequency(true);    // Set to active frequency
+}
+
 class MyServerCallbacks : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
   {
     deviceConnected = true;
+    recordInteraction();
     Serial.println("Device connected");
     Serial.println("Device connected at: " + String(millis()));
-  };
+  }
 
   void onDisconnect(BLEServer *pServer)
   {
     deviceConnected = false;
     Serial.println("Device disconnected");
-    Serial.println("Device disconnected at: " + String(millis()));
   }
 };
 
-// ===== SETUP FUNCTION =====
-void setup()
-{
-  // Initialize serial communication
-  Serial.begin(115200);
-
-  // Check wakeup reason
-  esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
-  if (wakeupReason == ESP_SLEEP_WAKEUP_EXT1)
-  {
-    Serial.println("Woke up from deep sleep due to reed switch HIGH");
-  }
-  else
-  {
-    Serial.println("Initial boot");
-  }
-
-  Serial.println("Starting TappieV2 BLE Server...");
-
-  // Configure reed switch
-  pinMode(reedSwitchPin, INPUT_PULLUP); // Set reed switch pin as input with pull-up resistor
-
-  // Check initial reed switch state - go back to sleep if LOW
-  if (digitalRead(reedSwitchPin) == LOW)
-  {
-    Serial.println("Reed switch still LOW - going back to sleep");
-    delay(100); // Small delay for stability
-    enterDeepSleep();
-  }
-  WiFi.mode(WIFI_OFF);
-  // Continue with normal setup
-  btStop(); // Disable classic Bluetooth to save power
-  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-  setCpuFrequencyMhz(80);
-  esp_sleep_enable_ext1_wakeup(reedSwitchPin, ESP_EXT1_WAKEUP_ANY_HIGH); // Enable wakeup on reed switch
-
-  // Initialize BLE, encoder and buttons
-  setupBLE();
-  setupEncoder();
-  setupMediaButtons();
-
-  // Initialize activity timer
-  lastActivityTime = millis();
-
-  Serial.println("Initialization complete - ready for connections");
-}
-
-// ===== BLE SETUP =====
-/**
- * Setup BLE server, service, and characteristics
- */
+// Modify setupBLE() to optimize BLE parameters
 void setupBLE()
 {
   // Create the BLE Device
@@ -309,11 +365,18 @@ void setupBLE()
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinInterval(0x20); // 40ms
-  pAdvertising->setMaxInterval(0x40);
+  pAdvertising->setMinInterval(BLE_MIN_CONN_INTERVAL); // Increased interval (80ms)
+  pAdvertising->setMaxInterval(BLE_MAX_CONN_INTERVAL); // Increased interval (160ms)
   BLEDevice::startAdvertising();
 
-  Serial.println("BLE server ready for connections");
+  // Update connection parameters to save power when connected
+  BLEDevice::setPower(ESP_PWR_LVL_N12); // Lowest power level
+
+  // Set preferred connection parameters for advertising
+  pAdvertising->setMinPreferred(BLE_MIN_CONN_INTERVAL);
+  pAdvertising->setMaxPreferred(BLE_MAX_CONN_INTERVAL);
+
+  Serial.println("BLE server ready with optimized power settings");
 }
 
 // ===== ENCODER SETUP =====
@@ -337,21 +400,25 @@ void setupEncoder()
   encButton.attachClick([]()
                         {
     Serial.println("Button: Single click");
+    recordInteraction();
     if (deviceConnected) sendNotification(encButtonChara, "single click"); });
 
   encButton.attachDoubleClick([]()
                               {
     Serial.println("Button: Double click");
+    recordInteraction();
     if (deviceConnected) sendNotification(encButtonChara, "double click"); });
 
   encButton.attachMultiClick([]()
                              {
     Serial.println("Button: Multi click");
+    recordInteraction();
     if (deviceConnected) sendNotification(encButtonChara, "multi click"); });
 
   encButton.attachLongPressStop([]()
                                 {
     Serial.println("Button: Long press");
+    recordInteraction();
     if (deviceConnected) sendNotification(encButtonChara, "long press release"); });
 
   Serial.println("Encoder and button initialized with interrupts");
@@ -411,6 +478,55 @@ void handleConnectionChanges()
 }
 
 // Add this function before loop()
+
+void setup()
+{
+  // Initialize serial for debugging
+  Serial.begin(115200);
+  delay(1000); // Give serial time to initialize
+  Serial.println("TappieV2 starting up...");
+
+  // Configure reed switch pin
+  pinMode(reedSwitchPin, INPUT_PULLUP);
+
+  // Determine if we were in deep sleep
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1)
+  {
+    Serial.println("Woke up from deep sleep by reed switch");
+  }
+  else
+  {
+    Serial.println("Normal power-on reset");
+  }
+
+  // Set initial CPU frequency
+  setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
+  currentCpuFreq = ACTIVE_CPU_FREQ;
+
+  // Configure unused GPIOs to save power
+  configureUnusedGPIOs();
+
+  // Disable unused peripherals if enabled
+  if (DISABLE_UNUSED_PERIPHERALS)
+  {
+    disableUnusedPeripherals();
+  }
+
+  // Initialize interaction time
+  lastInteractionTime = millis();
+
+  // Disable WiFi to save power
+  WiFi.mode(WIFI_OFF);
+
+  // Setup hardware components
+  setupEncoder();
+  setupMediaButtons();
+  setupBLE();
+
+  Serial.println("Setup complete!");
+}
+
 void enterDeepSleep()
 {
   Serial.println("Reed switch LOW - Entering deep sleep mode");
@@ -444,6 +560,8 @@ void enterDeepSleep()
 // ===== MAIN LOOP =====
 void loop()
 {
+  bool wasActive = false;
+
   // Process button events
   encButton.tick();
 
@@ -459,21 +577,18 @@ void loop()
   // Handle encoder position changes
   if (currentEncPosition != prevEncPosition)
   {
-    // Update activity timer
-    lastActivityTime = millis();
+    wasActive = true;
+    recordInteraction();
 
-    if (deviceConnected)
-    {
-      // Convert position to string and notify client
-      String encPositionStr = String(currentEncPosition);
-      String combinedStr = encPositionStr + getBatteryLevel();
-      Serial.println(combinedStr.c_str());
-      encPosChara->setValue(combinedStr.c_str());
-      encPosChara->notify();
+    // Convert position to string and notify client
+    String encPositionStr = String(currentEncPosition);
+    String combinedStr = encPositionStr + getBatteryLevel();
+    Serial.println(combinedStr.c_str());
+    encPosChara->setValue(combinedStr.c_str());
+    encPosChara->notify();
 
-      Serial.print("Encoder position: ");
-      Serial.println(currentEncPosition);
-    }
+    Serial.print("Encoder position: ");
+    Serial.println(currentEncPosition);
 
     // Update previous position
     prevEncPosition = currentEncPosition;
@@ -488,7 +603,7 @@ void loop()
   // Handle BLE connection changes
   handleConnectionChanges();
 
-  // Check reed switch state periodically to save power
+  // Check reed switch state periodically
   if (millis() - lastReedCheckTime > REED_CHECK_INTERVAL)
   {
     lastReedCheckTime = millis();
@@ -506,6 +621,30 @@ void loop()
     prevReedState = reedState;
   }
 
-  // Small delay to prevent CPU hogging
-  delay(5);
+  // Power management based on activity
+  unsigned long currentTime = millis();
+  unsigned long inactiveTime = currentTime - lastInteractionTime;
+
+  // If we've been inactive for a while but still connected, reduce CPU frequency
+  if (!wasActive && inactiveTime > AUTO_RESET_TIMEOUT)
+  {
+    updateCpuFrequency(false);
+  }
+
+  // If we've been inactive for longer, enter light sleep mode while maintaining connection
+  if (deviceConnected && !wasActive && inactiveTime > LIGHT_SLEEP_TIMEOUT && !inLightSleep)
+  {
+    enterLightSleep();
+    recordInteraction(); // Reset timers after waking up
+  }
+
+  // Much smaller delay to be more responsive when active, but still save power
+  if (wasActive)
+  {
+    delay(2); // More responsive when active
+  }
+  else
+  {
+    delay(10); // Save more power when inactive
+  }
 }
