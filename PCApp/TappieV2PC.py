@@ -46,7 +46,7 @@ class TappieController:
     
 
     def __init__(self):
-        #Initialize the controller
+        # Initialize the controller
         self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
         self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\loading.ico")
         self.ahk.menu_tray_tooltip("Tappie V2")
@@ -54,7 +54,8 @@ class TappieController:
         self.prev_enc_position = 0
         self.reset_timer = None
         self.last_volume_change = time.time()
-        
+        self.previousBatteryLevel = None  # Add this line
+    
     def schedule_reset(self):
         #Schedule a reset to Master after RESET_DELAY seconds
         if self.reset_timer:
@@ -75,8 +76,12 @@ class TappieController:
         return round(x / 5) * 5
     
     def updateToolTip(self, batteryLevel):
-        #Update the tooltip with the current battery level#
-        
+        # Update the tooltip with the current battery level
+        if self.previousBatteryLevel is not None:
+            print(f"previousBatteryLevel: {self.previousBatteryLevel}%")
+        else:
+            print("previousBatteryLevel not set")
+            
         toolTipString = ""
         for audio_device in AUDIO_DEVICES:
             if self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type="MASTER", control_type="MUTE") == "On":
@@ -92,14 +97,16 @@ class TappieController:
                     toolTipString += f"→ {audio_device}: {volume_int}%\n"
                 else:
                     toolTipString += f"{audio_device}: {volume_int}%\n"
-        if batteryLevel == None:
-            try:
-                toolTipString += f"Battery level: {previousBatteryLevel}"
-            except NameError:
+        if batteryLevel is None:
+            if self.previousBatteryLevel is not None:
+                toolTipString += f"Battery level: {self.previousBatteryLevel}%"
+            else:
                 toolTipString += "Battery level: N/A"
         else:
             toolTipString += f"Battery level: {batteryLevel}%"
-            previousBatteryLevel = batteryLevel
+            self.previousBatteryLevel = batteryLevel  # Store in instance variable
+            print(f"Previous battery level: {self.previousBatteryLevel}%")
+            
         self.ahk.menu_tray_tooltip(toolTipString)
         self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         
@@ -366,6 +373,7 @@ class BLEClient:
             #notify("Ready to talk to Tappie V2", "aaah get freaky", audio={'silent': 'true'})
             self.controller.ahk.menu_tray_tooltip("Ready to talk to Tappie V2")
             self.controller.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
+            self.controller.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
             
             # Keep checking connection
             while True:
