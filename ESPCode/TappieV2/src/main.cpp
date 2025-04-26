@@ -19,7 +19,6 @@
 #include <ESP32Encoder.h>
 #include <OneButton.h>
 #include <esp_sleep.h>
-#include <WiFi.h>
 #include <driver/periph_ctrl.h>
 #include <driver/adc.h>
 
@@ -28,7 +27,7 @@
 #define ENCODER_PIN_CLK 35
 #define ENCODER_PIN_SW 34
 
-gpio_num_t reedSwitchPin = GPIO_NUM_33; // GPIO pin for reed switch
+gpio_num_t reedSwitchPin = GPIO_NUM_15; // GPIO pin for reed switch
 
 #define AuxButtonPin 2
 #define GamingButtonPin 4
@@ -57,8 +56,6 @@ gpio_num_t reedSwitchPin = GPIO_NUM_33; // GPIO pin for reed switch
 #define DISABLE_UNUSED_PERIPHERALS true
 
 // Add to STATE VARIABLES section
-unsigned long lastInteractionTime = 0;
-bool inLightSleep = false;
 int currentCpuFreq = ACTIVE_CPU_FREQ;
 
 // ===== MEDIA BUTTON DEFINITIONS =====
@@ -222,8 +219,6 @@ void configureUnusedGPIOs()
  */
 void disableUnusedPeripherals()
 {
-  // Disable ADC
-  adc_power_release();
 
   // Disable UART2
   periph_module_disable(PERIPH_UART2_MODULE);
@@ -235,68 +230,12 @@ void disableUnusedPeripherals()
   Serial.println("Unused peripherals disabled for power saving");
 }
 
-/**
- * Updates CPU frequency based on activity
- */
-void updateCpuFrequency(bool active)
-{
-  if (active && currentCpuFreq != ACTIVE_CPU_FREQ)
-  {
-    setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
-    currentCpuFreq = ACTIVE_CPU_FREQ;
-    Serial.println("Set CPU to active frequency: " + String(ACTIVE_CPU_FREQ) + "MHz");
-  }
-  else if (!active && currentCpuFreq != INACTIVE_CPU_FREQ)
-  {
-    setCpuFrequencyMhz(INACTIVE_CPU_FREQ);
-    currentCpuFreq = INACTIVE_CPU_FREQ;
-    Serial.println("Set CPU to inactive frequency: " + String(INACTIVE_CPU_FREQ) + "MHz");
-  }
-}
-
-/**
- * Enter light sleep mode but maintain BLE connection
- */
-void enterLightSleep()
-{
-  if (inLightSleep)
-    return;
-
-  Serial.println("Entering light sleep mode");
-  inLightSleep = true;
-
-  // Configure light sleep parameters
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_ON);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_ON);
-
-  // Set up wake sources - any activity will wake us, but with a timeout
-  esp_sleep_enable_timer_wakeup(1000000); // Wake every 1 second to maintain BLE
-
-  // Actually enter light sleep
-  esp_light_sleep_start();
-
-  // We'll reach here after waking up
-  inLightSleep = false;
-  Serial.println("Exited light sleep mode");
-}
-
-/**
- * Record interaction and update power management
- */
-void recordInteraction()
-{
-  lastInteractionTime = millis();
-  lastActivityTime = millis(); // Update existing activity tracker
-  updateCpuFrequency(true);    // Set to active frequency
-}
 
 class MyServerCallbacks : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
   {
     deviceConnected = true;
-    recordInteraction();
     Serial.println("Device connected");
     Serial.println("Device connected at: " + String(millis()));
   }
@@ -369,12 +308,6 @@ void setupBLE()
   pAdvertising->setMaxInterval(BLE_MAX_CONN_INTERVAL); // Increased interval (160ms)
   BLEDevice::startAdvertising();
 
-  // Update connection parameters to save power when connected
-  BLEDevice::setPower(ESP_PWR_LVL_N12); // Lowest power level
-
-  // Set preferred connection parameters for advertising
-  pAdvertising->setMinPreferred(BLE_MIN_CONN_INTERVAL);
-  pAdvertising->setMaxPreferred(BLE_MAX_CONN_INTERVAL);
 
   Serial.println("BLE server ready with optimized power settings");
 }
@@ -400,25 +333,24 @@ void setupEncoder()
   encButton.attachClick([]()
                         {
     Serial.println("Button: Single click");
-    recordInteraction();
     if (deviceConnected) sendNotification(encButtonChara, "single click"); });
 
   encButton.attachDoubleClick([]()
                               {
     Serial.println("Button: Double click");
-    recordInteraction();
+    
     if (deviceConnected) sendNotification(encButtonChara, "double click"); });
 
   encButton.attachMultiClick([]()
-                             {
+                              {
     Serial.println("Button: Multi click");
-    recordInteraction();
+    
     if (deviceConnected) sendNotification(encButtonChara, "multi click"); });
 
   encButton.attachLongPressStop([]()
                                 {
     Serial.println("Button: Long press");
-    recordInteraction();
+    
     if (deviceConnected) sendNotification(encButtonChara, "long press release"); });
 
   Serial.println("Encoder and button initialized with interrupts");
@@ -513,12 +445,6 @@ void setup()
     disableUnusedPeripherals();
   }
 
-  // Initialize interaction time
-  lastInteractionTime = millis();
-
-  // Disable WiFi to save power
-  WiFi.mode(WIFI_OFF);
-
   // Setup hardware components
   setupEncoder();
   setupMediaButtons();
@@ -578,7 +504,7 @@ void loop()
   if (currentEncPosition != prevEncPosition)
   {
     wasActive = true;
-    recordInteraction();
+    
 
     // Convert position to string and notify client
     String encPositionStr = String(currentEncPosition);
@@ -597,6 +523,7 @@ void loop()
   // Auto-reset encoder after inactivity (only if not at zero)
   if (millis() - lastActivityTime > AUTO_RESET_TIMEOUT && currentEncPosition != 0)
   {
+    Serial.println("Auto-resetting encoder position due to inactivity");
     resetEncoder();
   }
 
@@ -614,8 +541,8 @@ void loop()
     // If reed switch becomes LOW, enter deep sleep
     if (reedState == LOW && prevReedState == HIGH)
     {
-      Serial.println("Reed switch changed to LOW");
-      enterDeepSleep();
+      Serial.println("Reed switch changed to LOW, dont forget to uncomment the deep sleep line in the code");
+      //enterDeepSleep();           // Uncomment this line to enable deep sleep on reed switch LOW   REMEMBER TO UNCOMMENT YOU IDIOT AAAAA                     
     }
 
     prevReedState = reedState;
@@ -623,20 +550,6 @@ void loop()
 
   // Power management based on activity
   unsigned long currentTime = millis();
-  unsigned long inactiveTime = currentTime - lastInteractionTime;
-
-  // If we've been inactive for a while but still connected, reduce CPU frequency
-  if (!wasActive && inactiveTime > AUTO_RESET_TIMEOUT)
-  {
-    updateCpuFrequency(false);
-  }
-
-  // If we've been inactive for longer, enter light sleep mode while maintaining connection
-  if (deviceConnected && !wasActive && inactiveTime > LIGHT_SLEEP_TIMEOUT && !inLightSleep)
-  {
-    enterLightSleep();
-    recordInteraction(); // Reset timers after waking up
-  }
 
   // Much smaller delay to be more responsive when active, but still save power
   if (wasActive)

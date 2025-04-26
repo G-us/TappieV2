@@ -33,6 +33,14 @@ AUDIO_DEVICES = {
     
 }
 
+AUDIO_DEVICE_ICONS = {
+    "Master": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico",
+    "Gaming": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\games.ico",
+    "Aux": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\musical-note.ico",
+    "Media": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\firefox.ico",
+    "Chat": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\bubble-chat.ico",
+}
+
 class TappieController:
 #Main controller class for Tappie device interactions
     
@@ -40,7 +48,7 @@ class TappieController:
     def __init__(self):
         #Initialize the controller
         self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
-        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
+        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\loading.ico")
         self.ahk.menu_tray_tooltip("Tappie V2")
         self.selected_device = "Master"
         self.prev_enc_position = 0
@@ -59,6 +67,7 @@ class TappieController:
     def _reset_to_master(self):
         #Reset selected device to Master#
         self.selected_device = "Master"
+        self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
         print("Inactivity detected - Reset to Master volume control")
     
     def roundToFive(self, x):
@@ -67,19 +76,32 @@ class TappieController:
     
     def updateToolTip(self, batteryLevel):
         #Update the tooltip with the current battery level#
+        
         toolTipString = ""
         for audio_device in AUDIO_DEVICES:
             if self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type="MASTER", control_type="MUTE") == "On":
-                toolTipString += f"{audio_device} is muted\n"
+                if self.selected_device == audio_device:
+                    toolTipString += f"→{audio_device} is muted\n"
+                else:
+                    toolTipString += f"{audio_device} is muted\n"
             else:
+
                 volume = self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type='MASTER', control_type='VOLUME')
                 volume_int = int(float(volume))
-                toolTipString += f"{audio_device}: {volume_int}%\n"
+                if self.selected_device == audio_device:
+                    toolTipString += f"→ {audio_device}: {volume_int}%\n"
+                else:
+                    toolTipString += f"{audio_device}: {volume_int}%\n"
         if batteryLevel == None:
-            toolTipString += "Battery level: idk man but soon\n"
+            try:
+                toolTipString += f"Battery level: {previousBatteryLevel}"
+            except NameError:
+                toolTipString += "Battery level: N/A"
         else:
             toolTipString += f"Battery level: {batteryLevel}%"
+            previousBatteryLevel = batteryLevel
         self.ahk.menu_tray_tooltip(toolTipString)
+        self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         
     
     def handleBatteryLevel(self, batteryLevel):
@@ -97,7 +119,7 @@ class TappieController:
                 self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
             else:
                 # Reset icon if battery is okay
-                self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
+                self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         except ValueError:
             print(f"Error: Invalid battery level format: {batteryLevel}")
         except Exception as e:
@@ -150,8 +172,9 @@ class TappieController:
         #Select a specific audio device by name#
         if device_name in AUDIO_DEVICES:
             self.selected_device = device_name
+            self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
             print(f"Selected device: {device_name}")
-            
+            self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[device_name])
             # Cancel any pending reset when a device is explicitly selected
             if self.reset_timer:
                 self.reset_timer.cancel()
@@ -228,7 +251,7 @@ class TappieController:
         
         if button_name != "0":  # Ignore release notifications
             self.select_device(button_name)
-            notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'})
+            notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'}, duration=0.5)
             self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\MediaChange.wav")
         
     def handle_media_double_button(self, button_name):
@@ -283,7 +306,8 @@ class BLEClient:
                 client = BleakClient(device, winrt=dict(use_cached_services=False))
                 await client.connect()
                 print(f"Connected: {client.is_connected}")
-                await toast_async("Connection Established with Tappie V2", "aaah get freaky")
+                self.controller.ahk.menu_tray_tooltip("Connected to Tappie V2")
+                #notify("Connection Established with Tappie V2", "aaah get freaky", audio={'silent': 'true'}, duration=0.5)
                 return client
             except BleakError as e:
                 print(f"Connection error: {e}")
@@ -339,13 +363,17 @@ class BLEClient:
         
             print("Listening for notifications, press Ctrl+C to stop...")
             
-            await toast_async("Ready to talk to Tappie V2", "aaah get freaky")
+            #notify("Ready to talk to Tappie V2", "aaah get freaky", audio={'silent': 'true'})
+            self.controller.ahk.menu_tray_tooltip("Ready to talk to Tappie V2")
+            self.controller.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\TappieIcon.ico")
             
             # Keep checking connection
             while True:
                 if not client.is_connected:
                     print("Disconnected! Attempting to reconnect...")
-                    await toast_async("Disconnected from Tappie V2", "aaah get freaky")
+                    notify("Disconnected from Tappie V2", "aaah get freaky")
+                    self.controller.ahk.menu_tray_tooltip("Disconnected from Tappie V2")
+                    self.controller.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\loading.ico")
                     break
                 await asyncio.sleep(0.5)
                 
