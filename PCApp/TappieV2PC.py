@@ -48,7 +48,7 @@ class TappieController:
     def __init__(self):
         # Initialize the controller
         self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
-        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\loadingIcon.ico")
+        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\TappieV2\\TappieV2\\PCApp\\loadingIcon.ico")
         self.ahk.menu_tray_tooltip("Tappie V2")
         self.selected_device = "Master"
         self.prev_enc_position = 0
@@ -117,15 +117,19 @@ class TappieController:
             # Try to convert to integer
             batteryLevel = int(batteryLevel)
             print(f"Battery level: {batteryLevel}%")
+
             
             # Handle low battery notification
-            if batteryLevel < 20:
-                print("Battery low!")
-                notify("Battery low!", "aaah get freaky", audio={'silent': 'true'})
-                self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
-                self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+            if batteryLevel <= 20:
+                notifiedBatteryLevel = True
+                if not notifiedBatteryLevel:
+                    print("Battery low!")
+                    notify("Battery low!", "aaah get freaky", audio={'silent': 'true'})
+                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
+                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
             else:
                 # Reset icon if battery is okay
+                notifiedBatteryLevel = False
                 self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         except ValueError:
             print(f"Error: Invalid battery level format: {batteryLevel}")
