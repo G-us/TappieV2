@@ -191,7 +191,7 @@ void setupMediaButtons()
 
 String getBatteryLevel()
 {
-  int batteryLevel = 5; // Random battery level for simulation
+  int batteryLevel = 57; // Random battery level for simulation
   // Use a proper separator format: " batteryLevel=" followed by the value
   String batteryStr = String(" " + String(batteryLevel));
   return batteryStr;
