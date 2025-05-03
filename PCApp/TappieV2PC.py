@@ -4,8 +4,6 @@ import threading
 from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 from ahk import AHK
-
-from win11toast import toast_async
 from win11toast import notify
 
 # ===== CONFIGURATION =====
@@ -55,6 +53,9 @@ class TappieController:
         self.reset_timer = None
         self.last_volume_change = time.time()
         self.previousBatteryLevel = None  # Add this line
+        self.notifiedBatteryLevel20 = False
+        self.notifiedBatteryLevel10 = False
+        self.notifiedBatteryLevel5 = False
     
     def schedule_reset(self):
         #Schedule a reset to Master after RESET_DELAY seconds
@@ -108,7 +109,8 @@ class TappieController:
             print(f"Previous battery level: {self.previousBatteryLevel}%")
             
         self.ahk.menu_tray_tooltip(toolTipString)
-        self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
+        if not self.notifiedBatteryLevel5:
+            self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         
     
     def handleBatteryLevel(self, batteryLevel):
@@ -119,17 +121,37 @@ class TappieController:
             print(f"Battery level: {batteryLevel}%")
 
             
+            if batteryLevel <= 5:
+                if not self.notifiedBatteryLevel5:
+                    self.notifiedBatteryLevel5 = True
+                    print("Battery critically low!")
+                    notify("Battery critically low!", "aaah get freaky", audio={'silent': 'true'})
+                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\criticallyLowBatteryIcon.ico")
+                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\criticallyLowBatterySound.wav")
+                    threading.Timer(5, self.ahk.sound_play, args=["C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3"]).start()
+
+            elif batteryLevel <= 10:
+                if not self.notifiedBatteryLevel10:
+                    self.notifiedBatteryLevel10 = True
+                    print("Battery lowkey critically low!")
+                    notify("Battery lowkey critically low!", "aaah get freaky", audio={'silent': 'true'})
+                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
+                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+
             # Handle low battery notification
-            if batteryLevel <= 20:
-                notifiedBatteryLevel = True
-                if not notifiedBatteryLevel:
+            elif batteryLevel <= 20:
+                if not self.notifiedBatteryLevel20:
+                    self.notifiedBatteryLevel20 = True
                     print("Battery low!")
                     notify("Battery low!", "aaah get freaky", audio={'silent': 'true'})
                     self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
                     self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+
             else:
                 # Reset icon if battery is okay
-                notifiedBatteryLevel = False
+                self.notifiedBatteryLevel20 = False
+                self.notifiedBatteryLevel10 = False
+                self.notifiedBatteryLevel5 = False
                 self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[self.selected_device])
         except ValueError:
             print(f"Error: Invalid battery level format: {batteryLevel}")
@@ -189,7 +211,8 @@ class TappieController:
             self.selected_device = device_name
             self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
             print(f"Selected device: {device_name}")
-            self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[device_name])
+            if self.notifiedBatteryLevel5:
+                self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[device_name])
             # Cancel any pending reset when a device is explicitly selected
             if self.reset_timer:
                 self.reset_timer.cancel()
