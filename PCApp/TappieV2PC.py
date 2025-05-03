@@ -31,13 +31,17 @@ AUDIO_DEVICES = {
     
 }
 
+defaultDirectory = "C:\\Users\\henry\\OneDrive\\Documents\\TappieV2\\TappieV2\\PCApp"
+
 AUDIO_DEVICE_ICONS = {
-    "Master": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\tappieIcon.ico",
-    "Gaming": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\gamingIcon.ico",
-    "Aux": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\auxIcon.ico",
-    "Media": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\mediaIcon.ico",
-    "Chat": "C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\chatIcon.ico",
+    "Master": defaultDirectory + "\\icons\\tappieIcon.ico",
+    "Gaming": defaultDirectory + "\\icons\\gamingIcon.ico",
+    "Aux": defaultDirectory + "\\icons\\auxIcon.ico",
+    "Media": defaultDirectory + "\\icons\\mediaIcon.ico",
+    "Chat": defaultDirectory + "\\icons\\chatIcon.ico",
 }
+
+
 
 class TappieController:
 #Main controller class for Tappie device interactions
@@ -46,7 +50,7 @@ class TappieController:
     def __init__(self):
         # Initialize the controller
         self.ahk = AHK(executable_path=r"C:\Program Files\AutoHotkey\v1.1.36.02\AutoHotkeyU64.exe")
-        self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\TappieV2\\TappieV2\\PCApp\\loadingIcon.ico")
+        self.ahk.menu_tray_icon(defaultDirectory + "\\icons\\tappieIcon.ico")
         self.ahk.menu_tray_tooltip("Tappie V2")
         self.selected_device = "Master"
         self.prev_enc_position = 0
@@ -126,8 +130,8 @@ class TappieController:
                     self.notifiedBatteryLevel5 = True
                     print("Battery critically low!")
                     notify("Battery critically low!", "aaah get freaky", audio={'silent': 'true'})
-                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\criticallyLowBatteryIcon.ico")
-                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\criticallyLowBatterySound.wav")
+                    self.ahk.menu_tray_icon(defaultDirectory + "\\icons\\criticallyLowBatteryIcon.ico")
+                    self.ahk.sound_play(defaultDirectory + "\\sounds\\criticallyLowBatterySound.wav")
                     threading.Timer(5, self.ahk.sound_play, args=["C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3"]).start()
 
             elif batteryLevel <= 10:
@@ -135,8 +139,8 @@ class TappieController:
                     self.notifiedBatteryLevel10 = True
                     print("Battery lowkey critically low!")
                     notify("Battery lowkey critically low!", "aaah get freaky", audio={'silent': 'true'})
-                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
-                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+                    self.ahk.menu_tray_icon(defaultDirectory + "\\icons\\lowBatteryIcon.ico")
+                    self.ahk.sound_play(defaultDirectory + "\\sounds\\lowBatterySound.mp3")
 
             # Handle low battery notification
             elif batteryLevel <= 20:
@@ -144,8 +148,8 @@ class TappieController:
                     self.notifiedBatteryLevel20 = True
                     print("Battery low!")
                     notify("Battery low!", "aaah get freaky", audio={'silent': 'true'})
-                    self.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\lowBatteryIcon.ico")
-                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3")
+                    self.ahk.menu_tray_icon(defaultDirectory + "\\icons\\lowBatteryIcon.ico")
+                    self.ahk.sound_play(defaultDirectory + "\\sounds\\lowBatterySound.mp3")
 
             else:
                 # Reset icon if battery is okay
@@ -187,12 +191,12 @@ class TappieController:
                 new_volume = current_volume + VOLUME_STEP
                 operation = "increased"
                 if new_volume >= 100:
-                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\maxVolumeSound.wav")
+                    self.ahk.sound_play(defaultDirectory + "\\sounds\\maxVolumeSound.wav")
             else:
                 new_volume = current_volume - VOLUME_STEP
                 operation = "decreased"
                 if new_volume <= 0:
-                    self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\minVolumeSound.wav")
+                    self.ahk.sound_play(defaultDirectory + "\\sounds\\minVolumeSound.wav")
             
             # Ensure volume stays within valid range (0-100)
             new_volume = max(0, min(100, new_volume))
@@ -275,7 +279,7 @@ class TappieController:
         
         if button_action == "single click":
             self.ahk.key_press("Media_Play_Pause")
-            self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\Pause.wav")
+            self.ahk.sound_play(defaultDirectory + "\\sounds\\Pause.wav")
         elif button_action == "double click":
             self.ahk.key_press("Media_Next")
         elif button_action == "multi click":
@@ -290,7 +294,7 @@ class TappieController:
         if button_name != "0":  # Ignore release notifications
             self.select_device(button_name)
             notify(f"Selected device: {button_name}", "aaah get freaky", audio={'silent': 'true'})
-            self.ahk.sound_play("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\MediaChange.wav")
+            self.ahk.sound_play(defaultDirectory + "\\sounds\\mediaChange.wav")
         
     def handle_media_double_button(self, button_name):
         #Handle double media button actions#
@@ -403,7 +407,7 @@ class BLEClient:
             
             #notify("Ready to talk to Tappie V2", "aaah get freaky", audio={'silent': 'true'})
             self.controller.ahk.menu_tray_tooltip("Ready to talk to Tappie V2")
-            self.controller.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\tappieIcon.ico")
+            self.controller.ahk.menu_tray_icon(defaultDirectory + "\\icons\\tappieIcon.ico")
             self.controller.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
             
             # Keep checking connection
@@ -412,7 +416,7 @@ class BLEClient:
                     print("Disconnected! Attempting to reconnect...")
                     notify("Disconnected from Tappie V2", "aaah get freaky")
                     self.controller.ahk.menu_tray_tooltip("Disconnected from Tappie V2")
-                    self.controller.ahk.menu_tray_icon("C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\loadingIcon.ico")
+                    self.controller.ahk.menu_tray_icon(defaultDirectory + "\\icons\\loadingIcon.ico")
                     break
                 await asyncio.sleep(0.5)
                 
