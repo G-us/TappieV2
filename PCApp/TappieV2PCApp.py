@@ -132,7 +132,7 @@ class TappieController:
                     notify("Battery critically low!", "aaah get freaky", audio={'silent': 'true'})
                     self.ahk.menu_tray_icon(defaultDirectory + "\\icons\\criticallyLowBatteryIcon.ico")
                     self.ahk.sound_play(defaultDirectory + "\\sounds\\criticallyLowBatterySound.wav")
-                    threading.Timer(5, self.ahk.sound_play, args=["C:\\Users\\henry\\OneDrive\\Documents\\\TappieV2\\TappieV2\\PCApp\\low_batterysound.mp3"]).start()
+                    threading.Timer(5, self.ahk.sound_play, args=[defaultDirectory + "\\sounds\\criticallyLowBatterySound.wav"]).start()
 
             elif batteryLevel <= 10:
                 if not self.notifiedBatteryLevel10:

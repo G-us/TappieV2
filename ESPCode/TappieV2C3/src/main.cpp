@@ -16,24 +16,26 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <ESP32Encoder.h>
+// #include <ESP32Encoder.h>
 #include <OneButton.h>
-#include <esp_sleep.h>
-#include <driver/periph_ctrl.h>
-#include <driver/adc.h>
+// #include <esp_sleep.h>
+// #include <driver/periph_ctrl.h>
+// #include <driver/adc.h>
+#include <AiEsp32RotaryEncoder.h>
 
 // ===== PIN DEFINITIONS =====
-#define ENCODER_PIN_DT 32
-#define ENCODER_PIN_CLK 35
-#define ENCODER_PIN_SW 34
+#define ENCODER_PIN_DT 2
+#define ENCODER_PIN_CLK 1
+#define ENCODER_PIN_SW 3
+#define ENCODER_STEPS 1
 
-gpio_num_t reedSwitchPin = GPIO_NUM_15; // GPIO pin for reed switch
+gpio_num_t reedSwitchPin = GPIO_NUM_5; // GPIO pin for reed switch
 
-#define AuxButtonPin 2
-#define GamingButtonPin 4
-#define MediaButtonPin 17
-#define ChatButtonPin 18
-#define MasterButtonPin 22
+#define AuxButtonPin 6
+#define GamingButtonPin 7
+#define MediaButtonPin 8
+#define ChatButtonPin 9
+#define MasterButtonPin 10
 
 // ===== BLE DEFINITIONS =====
 #define BLE_DEVICE_NAME "TappieV2"
@@ -44,8 +46,8 @@ gpio_num_t reedSwitchPin = GPIO_NUM_15; // GPIO pin for reed switch
 #define MEDIA_DOUBLEBUTTON_UUID "66f1ab02-c93d-44fe-8ca9-5e8bdbb2fe80"
 
 // ===== TIMING CONSTANTS =====
-#define AUTO_RESET_TIMEOUT 5000 // 5 seconds in milliseconds
-#define BUTTON_NOTIFY_DELAY 100 // 100ms delay after button notifications
+#define AUTO_RESET_TIMEOUT 5000       // 5 seconds in milliseconds
+#define BUTTON_NOTIFY_DELAY 100       // 100ms delay after button notifications
 #define BATTERY_CHECK_INTERVAL 300000 // 1 minute in milliseconds
 
 // ===== POWER MANAGEMENT CONSTANTS =====
@@ -61,8 +63,8 @@ int currentCpuFreq = ACTIVE_CPU_FREQ;
 
 int lastBatteryCheckTime = 0; // Last time battery level was checked
 
-    // ===== MEDIA BUTTON DEFINITIONS =====
-    struct MediaButton
+// ===== MEDIA BUTTON DEFINITIONS =====
+struct MediaButton
 {
   const char *name;
   uint8_t pin;
@@ -70,7 +72,8 @@ int lastBatteryCheckTime = 0; // Last time battery level was checked
 };
 
 // ===== GLOBAL OBJECTS =====
-ESP32Encoder encoder;
+AiEsp32RotaryEncoder encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_STEPS);
+// ESP32Encoder encoder;
 OneButton encButton(ENCODER_PIN_SW, true, true); // active low, enable internal pullup
 
 // BLE server and characteristics
@@ -134,6 +137,21 @@ void sendNotification(BLECharacteristic *characteristic, const char *value)
     delay(BUTTON_NOTIFY_DELAY);
     characteristic->setValue("0");
     characteristic->notify();
+  }
+}
+
+void rotary_loop()
+{
+  // Check if the encoder has moved
+  if (encoder.encoderChanged())
+  {
+    // Get the current position and send it to the client
+    int position = encoder.readEncoder(); // Divide by 2 to match the original code
+    Serial.print("Encoder position: ");
+    Serial.println(position);
+    String positionStr = String(position) + getBatteryLevel();
+    encPosChara->setValue(positionStr.c_str());
+    encPosChara->notify();
   }
 }
 
@@ -233,7 +251,6 @@ void disableUnusedPeripherals()
   Serial.println("Unused peripherals disabled for power saving");
 }
 
-
 class MyServerCallbacks : public BLEServerCallbacks
 {
   void onConnect(BLEServer *pServer)
@@ -311,7 +328,6 @@ void setupBLE()
   pAdvertising->setMaxInterval(BLE_MAX_CONN_INTERVAL); // Increased interval (160ms)
   BLEDevice::startAdvertising();
 
-
   Serial.println("BLE server ready with optimized power settings");
 }
 
@@ -327,10 +343,9 @@ void setupEncoder()
   pinMode(ENCODER_PIN_SW, INPUT_PULLUP);
 
   // Configure ESP32Encoder
-  ESP32Encoder::useInternalWeakPullResistors = puType::up;
-  encoder.attachHalfQuad(ENCODER_PIN_DT, ENCODER_PIN_CLK);
-  encoder.clearCount();
-  encoder.setFilter(1023); // Set filter to reduce noise
+  // encoder.attachHalfQuad(ENCODER_PIN_DT, ENCODER_PIN_CLK);
+  // encoder.clearCount();
+  // encoder.setFilter(1023); // Set filter to reduce noise
 
   // Configure button handlers for different actions
   encButton.attachClick([]()
@@ -345,7 +360,7 @@ void setupEncoder()
     if (deviceConnected) sendNotification(encButtonChara, "double click"); });
 
   encButton.attachMultiClick([]()
-                              {
+                             {
     Serial.println("Button: Multi click");
     
     if (deviceConnected) sendNotification(encButtonChara, "multi click"); });
@@ -365,7 +380,7 @@ void setupEncoder()
  */
 void resetEncoder()
 {
-  encoder.clearCount();
+  // encoder.clearCount();
   prevEncPosition = 0;
   currentEncPosition = 0;
   Serial.println("Encoder count auto-reset after inactivity");
@@ -381,6 +396,11 @@ void resetEncoder()
 
   // Update the activity timer
   lastActivityTime = millis();
+}
+
+void IRAM_ATTR readEncoderISR()
+{
+  encoder.readEncoder_ISR();
 }
 
 /**
@@ -416,37 +436,50 @@ void handleConnectionChanges()
 
 void setup()
 {
+  pinMode(0, OUTPUT); // Set GPIO 1 as output for debugging
+  digitalWrite(0, HIGH); // Set reed switch pin to LOW to avoid false trigger
   // Initialize serial for debugging
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
   Serial.println("TappieV2 starting up...");
+  digitalWrite(0, LOW); // Set GPIO 1 to LOW for debugging
+  Serial.println("Debugging GPIO 1 LOW");
+  delay(1000); // Give time for debugging
+  digitalWrite(0, HIGH); // Set GPIO 1 to HIGH for debugging
+  Serial.println("Debugging GPIO 1 HIGH");
+
+
 
   // Configure reed switch pin
   pinMode(reedSwitchPin, INPUT_PULLUP);
 
   // Determine if we were in deep sleep
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1)
-  {
-    Serial.println("Woke up from deep sleep by reed switch");
-  }
-  else
-  {
-    Serial.println("Normal power-on reset");
-  }
+  // esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  // if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1)
+  // {
+  //   Serial.println("Woke up from deep sleep by reed switch");
+  // }
+  // else
+  // {
+  //   Serial.println("Normal power-on reset");
+  // }
+
+  encoder.begin();
+  encoder.setup(readEncoderISR);
+  encoder.setBoundaries(-1000, 1000, false); // Set boundaries for encoder
 
   // Set initial CPU frequency
-  setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
-  currentCpuFreq = ACTIVE_CPU_FREQ;
+  // setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
+  // currentCpuFreq = ACTIVE_CPU_FREQ;
 
   // Configure unused GPIOs to save power
-  configureUnusedGPIOs();
+  // configureUnusedGPIOs();
 
-  // Disable unused peripherals if enabled
-  if (DISABLE_UNUSED_PERIPHERALS)
-  {
-    disableUnusedPeripherals();
-  }
+  // // Disable unused peripherals if enabled
+  // if (DISABLE_UNUSED_PERIPHERALS)
+  // {
+  //   disableUnusedPeripherals();
+  // }
 
   // Setup hardware components
   setupEncoder();
@@ -454,6 +487,7 @@ void setup()
   setupBLE();
 
   Serial.println("Setup complete!");
+  digitalWrite(1, HIGH); // Set reed switch pin to HIGH to avoid false trigger
 }
 
 void enterDeepSleep()
@@ -475,7 +509,7 @@ void enterDeepSleep()
 
   // Configure wakeup on HIGH state of reed switch (bitmask format)
   uint64_t wakeupBitMask = 1ULL << reedSwitchPin;
-  //esp_sleep_enable_ext1_wakeup(wakeupBitMask, ESP_EXT1_WAKEUP_ANY_HIGH);
+  // esp_sleep_enable_ext1_wakeup(wakeupBitMask, ESP_EXT1_WAKEUP_ANY_HIGH);
 
   Serial.println("Going to sleep now");
   Serial.flush(); // Make sure all serial output is sent
@@ -489,9 +523,16 @@ void enterDeepSleep()
 // ===== MAIN LOOP =====
 void loop()
 {
-  bool wasActive = false;
 
-  // Process button events
+  // digitalWrite(0, LOW); // Set GPIO 1 to LOW for debugging
+  // Serial.println("Debugging GPIO 1 LOW in loop()");
+  // delay(1000); // Give time for debugging
+  // digitalWrite(0, HIGH); // Set GPIO 1 to HIGH for debugging
+  // Serial.println("Debugging GPIO 1 HIGH in loop()");
+
+  // bool wasActive = false;
+
+  // // Process button events
   encButton.tick();
 
   // Process media button events
@@ -500,34 +541,35 @@ void loop()
     mediaButtons[i].button.tick();
   }
 
+  rotary_loop(); // Call the rotary loop function
+
   // Get current encoder position
-  currentEncPosition = encoder.getCount() / 2;
+  // currentEncPosition = encoder.getCount() / 2;
 
-  // Handle encoder position changes
-  if (currentEncPosition != prevEncPosition)
-  {
-    wasActive = true;
-    
+  // // Handle encoder position changes
+  // if (currentEncPosition != prevEncPosition)
+  // {
+  //   wasActive = true;
 
-    // Convert position to string and notify client
-    String encPositionStr = String(currentEncPosition);
-    String combinedStr = encPositionStr + getBatteryLevel();
-    Serial.println(combinedStr.c_str());
-    encPosChara->setValue(combinedStr.c_str());
-    encPosChara->notify();
+  //   // Convert position to string and notify client
+  //   String encPositionStr = String(currentEncPosition);
+  //   String combinedStr = encPositionStr + getBatteryLevel();
+  //   Serial.println(combinedStr.c_str());
+  //   encPosChara->setValue(combinedStr.c_str());
+  //   encPosChara->notify();
 
-    Serial.print("Encoder position: ");
-    Serial.println(currentEncPosition);
+  //   Serial.print("Encoder position: ");
+  //   Serial.println(currentEncPosition);
 
-    // Update previous position
-    prevEncPosition = currentEncPosition;
-  }
+  //   // Update previous position
+  //   prevEncPosition = currentEncPosition;
+  // }
 
-  // Auto-reset encoder after inactivity (only if not at zero)
+  //Auto-reset encoder after inactivity (only if not at zero)
   if (millis() - lastActivityTime > AUTO_RESET_TIMEOUT && currentEncPosition != 0)
   {
     Serial.println("Auto-resetting encoder position due to inactivity");
-    //Janky way to send battery level to the client but it works
+    // Janky way to send battery level to the client but it works
     resetEncoder();
   }
 
@@ -546,7 +588,7 @@ void loop()
     if (reedState == LOW && prevReedState == HIGH)
     {
       Serial.println("Reed switch changed to LOW, dont forget to uncomment the deep sleep line in the code");
-      //enterDeepSleep();           // Uncomment this line to enable deep sleep on reed switch LOW   REMEMBER TO UNCOMMENT YOU IDIOT AAAAA                     
+      // enterDeepSleep();           // Uncomment this line to enable deep sleep on reed switch LOW   REMEMBER TO UNCOMMENT YOU IDIOT AAAAA
     }
 
     prevReedState = reedState;
@@ -561,13 +603,14 @@ void loop()
   // Power management based on activity
   unsigned long currentTime = millis();
 
-  // Much smaller delay to be more responsive when active, but still save power
-  if (wasActive)
-  {
-    delay(2); // More responsive when active
-  }
-  else
-  {
-    delay(10); // Save more power when inactive
-  }
+//   Much smaller delay to be more responsive when active, but still save power
+//   if (wasActive)
+//   {
+//     delay(2); // More responsive when active
+//   }
+//   else
+//   {
+//     delay(10); // Save more power when inactive
+//   }
+// }
 }
