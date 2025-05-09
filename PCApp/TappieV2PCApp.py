@@ -91,7 +91,7 @@ class TappieController:
         for audio_device in AUDIO_DEVICES:
             if self.ahk.sound_get(device_number=AUDIO_DEVICES[audio_device], component_type="MASTER", control_type="MUTE") == "On":
                 if self.selected_device == audio_device:
-                    toolTipString += f"→{audio_device} is muted\n"
+                    toolTipString += f"→ {audio_device} is muted\n"
                 else:
                     toolTipString += f"{audio_device} is muted\n"
             else:
@@ -204,6 +204,7 @@ class TappieController:
             
             self.ahk.sound_set(new_volume, device_number=device_index, component_type="MASTER", control_type="VOLUME")
             print(f"Volume {operation} to {new_volume} for device {device_index}")
+            self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
             
             # Update timestamp and schedule reset
             self.last_volume_change = time.time()
@@ -212,17 +213,18 @@ class TappieController:
     def select_device(self, device_name):
         #Select a specific audio device by name#
         if device_name in AUDIO_DEVICES:
-            self.selected_device = device_name
-            self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
-            print(f"Selected device: {device_name}")
-            if self.notifiedBatteryLevel5:
-                self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[device_name])
-            # Cancel any pending reset when a device is explicitly selected
-            if self.reset_timer:
-                self.reset_timer.cancel()
-                self.reset_timer = None
-                self.last_volume_change = time.time()
-                self.schedule_reset()
+            if device_name != self.selected_device:
+                self.selected_device = device_name
+                self.updateToolTip(batteryLevel=None)  # Update tooltip without battery level
+                print(f"Selected device: {device_name}")
+                if self.notifiedBatteryLevel5:
+                    self.ahk.menu_tray_icon(AUDIO_DEVICE_ICONS[device_name])
+                # Cancel any pending reset when a device is explicitly selected
+                if self.reset_timer:
+                    self.reset_timer.cancel()
+                    self.reset_timer = None
+                    self.last_volume_change = time.time()
+                    self.schedule_reset()
         else:
             print(f"Unknown device: {device_name}")
     
@@ -254,18 +256,17 @@ class TappieController:
             
             # Convert position to integer with error handling
             try:
-                current_position = int(position)
                 
-                if current_position > self.prev_enc_position:
+                if position == "increasing":
                     print(f"Encoder position increased: {position}")
                     self.adjust_volume(increase=True)
-                elif current_position < self.prev_enc_position:
+                elif position == "decreasing":
                     print(f"Encoder position decreased: {position}")
                     self.adjust_volume(increase=False)
                 else:
                     print(f"Encoder position unchanged: {position}")
                     
-                self.prev_enc_position = current_position
+                #self.prev_enc_position = current_position
                 
             except ValueError:
                 print(f"Error: Could not convert position '{position}' to integer")

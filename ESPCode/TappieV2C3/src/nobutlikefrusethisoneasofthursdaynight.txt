@@ -16,19 +16,20 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-
+// #include <ESP32Encoder.h>
 #include <OneButton.h>
-#include <esp_sleep.h>
-#include <driver/periph_ctrl.h>
-#include <driver/adc.h>
+// #include <esp_sleep.h>
+// #include <driver/periph_ctrl.h>
+// #include <driver/adc.h>
+#include <AiEsp32RotaryEncoder.h>
 
 // ===== PIN DEFINITIONS =====
-const uint8_t ENCODER_PIN_DT = 2;
-const uint8_t ENCODER_PIN_CLK = 1;
-const uint8_t ENCODER_PIN_SW = 3;
+#define ENCODER_PIN_DT 2
+#define ENCODER_PIN_CLK 1
+#define ENCODER_PIN_SW 3
 #define ENCODER_STEPS 1
 
-    gpio_num_t reedSwitchPin = GPIO_NUM_5; // GPIO pin for reed switch
+gpio_num_t reedSwitchPin = GPIO_NUM_5; // GPIO pin for reed switch
 
 #define AuxButtonPin 6
 #define GamingButtonPin 7
@@ -70,7 +71,9 @@ struct MediaButton
   OneButton button;
 };
 
-// ===== GLOBAL VARIABLES =====
+// ===== GLOBAL OBJECTS =====
+//AiEsp32RotaryEncoder encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT, ENCODER_STEPS);
+// ESP32Encoder encoder;
 OneButton encButton(ENCODER_PIN_SW, true, true); // active low, enable internal pullup
 
 // BLE server and characteristics
@@ -139,6 +142,7 @@ void sendNotification(BLECharacteristic *characteristic, const char *value)
     characteristic->notify();
   }
 }
+
 
 // Add this function before setupMediaButtons()
 void buttonClickCallback(void *parameter)
@@ -227,10 +231,11 @@ void disableUnusedPeripherals()
 {
 
   // Disable UART2
+  // periph_module_disable(PERIPH_UART2_MODULE);
 
-  // Disable I2C if not used
-  periph_module_disable(PERIPH_I2C0_MODULE);
-
+  // // Disable I2C if not used
+  // periph_module_disable(PERIPH_I2C0_MODULE);
+  // periph_module_disable(PERIPH_I2C1_MODULE);
 
   Serial.println("Unused peripherals disabled for power saving");
 }
@@ -321,6 +326,10 @@ void setupBLE()
  */
 void setupEncoder()
 {
+  // Configure encoder pins with pull-up resistors
+  pinMode(ENCODER_PIN_DT, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_CLK, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_SW, INPUT_PULLUP);
 
   // Configure ESP32Encoder
   // encoder.attachHalfQuad(ENCODER_PIN_DT, ENCODER_PIN_CLK);
@@ -340,7 +349,7 @@ void setupEncoder()
     if (deviceConnected) sendNotification(encButtonChara, "double click"); });
 
   encButton.attachMultiClick([]()
-                              {
+                             {
     Serial.println("Button: Multi click");
     
     if (deviceConnected) sendNotification(encButtonChara, "multi click"); });
@@ -360,6 +369,9 @@ void setupEncoder()
  */
 void resetEncoder()
 {
+  // encoder.clearCount();
+  prevEncPosition = 0;
+  currentEncPosition = 0;
   Serial.println("Encoder count auto-reset after inactivity");
 
   // Send reset notification to connected client
@@ -375,72 +387,32 @@ void resetEncoder()
   lastActivityTime = millis();
 }
 
-// Global variables for encoder state tracking
-volatile int8_t encoderDelta = 0;         // Track encoder movement, processed in main loop
-volatile uint8_t encoderState = 0;        // Current quadrature state
-volatile bool fullDetentRotation = false; // Flag to indicate a complete detent rotation
-
 void IRAM_ATTR readEncoderISR()
 {
-  static uint8_t lastState = 0;
-  static int8_t counter = 0;
+  // Read the current state of the encoder pins
+  currentStateCLK = digitalRead(ENCODER_PIN_CLK);
 
-  // Read both pins at the same time to avoid race conditions
-  uint8_t clk = digitalRead(ENCODER_PIN_CLK);
-  uint8_t dt = digitalRead(ENCODER_PIN_DT);
-
-  // Combine into a state value 0-3
-  uint8_t newState = (clk << 1) | dt;
-
-  // Only process the state if it's different from the last one
-  // This avoids spurious triggering
-  if (newState != lastState)
+  // If the state has changed, update the encoder position
+  if (currentStateCLK != lastStateCLK)
   {
-    // Determine direction based on state transition
-    switch (lastState)
+    if (digitalRead(ENCODER_PIN_DT) != currentStateCLK)
     {
-    case 0:
-      if (newState == 2)
-        counter++;
-      else if (newState == 1)
-        counter--;
-      break;
-    case 1:
-      if (newState == 0)
-        counter++;
-      else if (newState == 3)
-        counter--;
-      break;
-    case 2:
-      if (newState == 3)
-        counter++;
-      else if (newState == 0)
-        counter--;
-      break;
-    case 3:
-      if (newState == 1)
-        counter++;
-      else if (newState == 2)
-        counter--;
-      break;
+      // Get the current position and send it to the client
+      Serial.print("increasing");
+      String positionStr = "increasing" + getBatteryLevel();
+      encPosChara->setValue(positionStr.c_str());
+      encPosChara->notify();
+    }
+    else
+    {
+      Serial.print("decreasing");
+      String positionStr = "decreasing" + getBatteryLevel();
+      encPosChara->setValue(positionStr.c_str());
+      encPosChara->notify();
     }
 
-    // Most rotary encoders produce 4 state transitions per detent
-    // We'll set our threshold accordingly
-    if (counter >= 4)
-    {
-      encoderDelta++; // One complete CW detent
-      counter = 0;
-      fullDetentRotation = true;
-    }
-    else if (counter <= -4)
-    {
-      encoderDelta--; // One complete CCW detent
-      counter = 0;
-      fullDetentRotation = true;
-    }
-
-    lastState = newState; // Save the state for next comparison
+    // Update the last state
+    lastStateCLK = currentStateCLK;
   }
 }
 
@@ -477,31 +449,46 @@ void handleConnectionChanges()
 
 void setup()
 {
-
+  pinMode(0, OUTPUT); // Set GPIO 1 as output for debugging
+  digitalWrite(0, HIGH); // Set reed switch pin to LOW to avoid false trigger
   // Initialize serial for debugging
   Serial.begin(115200);
+  delay(1000); // Give serial time to initialize
+  Serial.println("TappieV2 starting up...");
+  digitalWrite(0, LOW); // Set GPIO 1 to LOW for debugging
+  Serial.println("Debugging GPIO 1 LOW");
+  delay(1000); // Give time for debugging
+  digitalWrite(0, HIGH); // Set GPIO 1 to HIGH for debugging
+  Serial.println("Debugging GPIO 1 HIGH");
+
 
 
   // Configure reed switch pin
   pinMode(reedSwitchPin, INPUT_PULLUP);
 
-  pinMode(ENCODER_PIN_DT, INPUT_PULLUP);
-  pinMode(ENCODER_PIN_CLK, INPUT_PULLUP);
-  pinMode(ENCODER_PIN_SW, INPUT_PULLUP);
+  // Determine if we were in deep sleep
+  // esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  // if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1)
+  // {
+  //   Serial.println("Woke up from deep sleep by reed switch");
+  // }
+  // else
+  // {
+  //   Serial.println("Normal power-on reset");
+  // }
+  // Set GPIO 1 to LOW for debugging
 
+  lastStateCLK = digitalRead(ENCODER_PIN_CLK); // Read initial state of CLK pin
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_CLK), readEncoderISR, CHANGE); // Attach interrupt to CLK pin
 
-  lastStateCLK = digitalRead(ENCODER_PIN_CLK);                                     // Read initial state of CLK pin
-  attachInterrupt(ENCODER_PIN_CLK, readEncoderISR, CHANGE); // Attach interrupt to CLK pin
-  attachInterrupt(ENCODER_PIN_DT, readEncoderISR, CHANGE);
-
-  // //Set initial CPU frequency
+  // Set initial CPU frequency
   // setCpuFrequencyMhz(ACTIVE_CPU_FREQ);
   // currentCpuFreq = ACTIVE_CPU_FREQ;
 
-  // //Configure unused GPIOs to save power
+  // Configure unused GPIOs to save power
   // configureUnusedGPIOs();
 
-  // Disable unused peripherals if enabled
+  // // Disable unused peripherals if enabled
   // if (DISABLE_UNUSED_PERIPHERALS)
   // {
   //   disableUnusedPeripherals();
@@ -513,7 +500,7 @@ void setup()
   setupBLE();
 
   Serial.println("Setup complete!");
-  //digitalWrite(1, HIGH); // Set reed switch pin to HIGH to avoid false trigger
+  digitalWrite(1, HIGH); // Set reed switch pin to HIGH to avoid false trigger
 }
 
 void enterDeepSleep()
@@ -550,6 +537,13 @@ void enterDeepSleep()
 void loop()
 {
 
+  // digitalWrite(0, LOW); // Set GPIO 1 to LOW for debugging
+  // Serial.println("Debugging GPIO 1 LOW in loop()");
+  // delay(1000); // Give time for debugging
+  // digitalWrite(0, HIGH); // Set GPIO 1 to HIGH for debugging
+  // Serial.println("Debugging GPIO 1 HIGH in loop()");
+
+  // bool wasActive = false;
 
   // // Process button events
   encButton.tick();
@@ -560,36 +554,36 @@ void loop()
     mediaButtons[i].button.tick();
   }
 
-  if (fullDetentRotation)
-  {
-    int8_t delta;
 
-    // Safely get and reset the encoder delta
-    noInterrupts();
-    delta = encoderDelta;
-    encoderDelta = 0;
-    fullDetentRotation = false; // Reset the flag
-    interrupts();
+  // Get current encoder position
+  // currentEncPosition = encoder.getCount() / 2;
 
-    if (delta > 0)
-    {
-      Serial.println("+");
-      String positionStr = "increasing" + getBatteryLevel();
-      encPosChara->setValue(positionStr.c_str());
-      encPosChara->notify();
-    }
-    else if (delta < 0) // Explicitly check if delta < 0
-    {
-      Serial.println("-");
-      String positionStr = "decreasing" + getBatteryLevel();
-      encPosChara->setValue(positionStr.c_str());
-      encPosChara->notify();
-    }
+  // // Handle encoder position changes
+  // if (currentEncPosition != prevEncPosition)
+  // {
+  //   wasActive = true;
 
-    // Update last activity time since we had encoder movement
-    lastActivityTime = millis();
-  }
+  //   // Convert position to string and notify client
+  //   String encPositionStr = String(currentEncPosition);
+  //   String combinedStr = encPositionStr + getBatteryLevel();
+  //   Serial.println(combinedStr.c_str());
+  //   encPosChara->setValue(combinedStr.c_str());
+  //   encPosChara->notify();
 
+  //   Serial.print("Encoder position: ");
+  //   Serial.println(currentEncPosition);
+
+  //   // Update previous position
+  //   prevEncPosition = currentEncPosition;
+  // }
+
+  //Auto-reset encoder after inactivity (only if not at zero)
+  // if (millis() - lastActivityTime > AUTO_RESET_TIMEOUT && currentEncPosition != 0)
+  // {
+  //   Serial.println("Auto-resetting encoder position due to inactivity");
+  //   //Janky way to send battery level to the client but it works
+  //   resetEncoder();
+  // }
 
   // Handle BLE connection changes
   handleConnectionChanges();
@@ -620,4 +614,15 @@ void loop()
 
   // Power management based on activity
   unsigned long currentTime = millis();
+
+//   Much smaller delay to be more responsive when active, but still save power
+//   if (wasActive)
+//   {
+//     delay(2); // More responsive when active
+//   }
+//   else
+//   {
+//     delay(10); // Save more power when inactive
+//   }
+// }
 }
