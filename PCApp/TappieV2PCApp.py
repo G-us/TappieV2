@@ -256,17 +256,17 @@ class TappieController:
             
             # Convert position to integer with error handling
             try:
-                
-                if position == "increasing":
+                current_position = int(position)
+                if current_position > self.prev_enc_position:
                     print(f"Encoder position increased: {position}")
                     self.adjust_volume(increase=True)
-                elif position == "decreasing":
+                elif current_position < self.prev_enc_position:
                     print(f"Encoder position decreased: {position}")
                     self.adjust_volume(increase=False)
                 else:
                     print(f"Encoder position unchanged: {position}")
                     
-                #self.prev_enc_position = current_position
+                self.prev_enc_position = current_position
                 
             except ValueError:
                 print(f"Error: Could not convert position '{position}' to integer")
@@ -391,7 +391,8 @@ class BLEClient:
                     print(f"  Characteristic: {char.uuid}")
                     print(f"    Properties: {char.properties}")
                     print(f"    Has Notify: {'Notify' in char.properties}")
-        
+        except Exception as e:
+            print(f"Error getting services: {e}")
             # Start notifications with better error handling and delays
             for uuid, handler in handlers.items():
                 try:
