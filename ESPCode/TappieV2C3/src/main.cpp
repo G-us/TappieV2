@@ -25,7 +25,7 @@
 // ===== PIN DEFINITIONS =====
 const uint8_t ENCODER_PIN_DT = 2;
 const uint8_t ENCODER_PIN_CLK = 1;
-const uint8_t ENCODER_PIN_SW = 3;
+const uint8_t ENCODER_PIN_SW = 4;
 #define ENCODER_STEPS 1
 
     gpio_num_t reedSwitchPin = GPIO_NUM_5; // GPIO pin for reed switch
@@ -35,6 +35,8 @@ const uint8_t ENCODER_PIN_SW = 3;
 #define MediaButtonPin 8
 #define ChatButtonPin 9
 #define MasterButtonPin 10
+
+#define BATTERY_PIN 3// GPIO pin for battery level measurement
 
 // ===== BLE DEFINITIONS =====
 #define BLE_DEVICE_NAME "TappieV2"
@@ -194,7 +196,9 @@ void setupMediaButtons()
 
 String getBatteryLevel()
 {
-  int batteryLevel = 57; // Random battery level for simulation
+
+  float voltage = analogReadMilliVolts(BATTERY_PIN) * 2; // Read battery voltage
+  int batteryLevel = (int)(voltage / 4200 * 100); // Convert to percentage
   // Use a proper separator format: " batteryLevel=" followed by the value
   String batteryStr = String(" " + String(batteryLevel));
   return batteryStr;
@@ -488,6 +492,8 @@ void setup()
   pinMode(ENCODER_PIN_DT, INPUT_PULLUP);
   pinMode(ENCODER_PIN_CLK, INPUT_PULLUP);
   pinMode(ENCODER_PIN_SW, INPUT_PULLUP);
+
+  pinMode(BATTERY_PIN, INPUT); // Set battery pin as input
 
 
   lastStateCLK = digitalRead(ENCODER_PIN_CLK);                                     // Read initial state of CLK pin
