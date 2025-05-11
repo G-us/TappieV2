@@ -16,7 +16,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-
+#include <AiEsp32RotaryEncoder.h>
 #include <OneButton.h>
 #include <esp_sleep.h>
 #include <driver/periph_ctrl.h>
