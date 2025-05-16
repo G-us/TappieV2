@@ -33,7 +33,7 @@ gpio_num_t reedSwitchPin = GPIO_NUM_5; // GPIO pin for reed switch
 #define AuxButtonPin 6
 #define GamingButtonPin 7
 #define MediaButtonPin 8
-#define ChatButtonPin 9
+#define ChatButtonPin 5
 #define MasterButtonPin 10
 
 #define BATTERY_PIN 3 // GPIO pin for battery level measurement
